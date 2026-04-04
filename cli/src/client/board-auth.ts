@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import pc from "picocolors";
 import { buildCliCommandLabel } from "./command-label.js";
+import { ApiRequestError } from "./http.js";
 import { resolveDefaultCliAuthPath } from "../config/home.js";
 
 type RequestedAccess = "board" | "instance_admin_required";
@@ -163,7 +164,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
       body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string"
         ? (body as { error: string }).error
         : `Request failed: ${response.status}`;
-    throw new Error(message);
+    throw new ApiRequestError(response.status, message, body && typeof body === "object" ? (body as { details?: unknown }).details : undefined, body);
   }
 
   return response.json() as Promise<T>;
@@ -203,15 +204,28 @@ export async function loginBoardCli(params: {
   const createUrl = `${apiBase}/api/cli-auth/challenges`;
   const command = params.command?.trim() || buildCliCommandLabel();
 
-  const challenge = await requestJson<CreateChallengeResponse>(createUrl, {
-    method: "POST",
-    body: JSON.stringify({
-      command,
-      clientName: params.clientName?.trim() || "paperclipai cli",
-      requestedAccess: params.requestedAccess,
-      requestedCompanyId: params.requestedCompanyId?.trim() || null,
-    }),
-  });
+  async function createChallenge(requestedCompanyId?: string | null) {
+    return requestJson<CreateChallengeResponse>(createUrl, {
+      method: "POST",
+      body: JSON.stringify({
+        command,
+        clientName: params.clientName?.trim() || "paperclipai cli",
+        requestedAccess: params.requestedAccess,
+        requestedCompanyId: requestedCompanyId?.trim() || null,
+      }),
+    });
+  }
+
+  let challenge: CreateChallengeResponse;
+  try {
+    challenge = await createChallenge(params.requestedCompanyId);
+  } catch (error) {
+    if (params.requestedCompanyId?.trim() && error instanceof ApiRequestError && error.status >= 500) {
+      challenge = await createChallenge(null);
+    } else {
+      throw error;
+    }
+  }
 
   const approvalUrl = challenge.approvalUrl ?? `${apiBase}${challenge.approvalPath}`;
   if (params.print !== false) {
