@@ -793,7 +793,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/bridge/data", async (req, res) => {
-    assertBoard(req);
 
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
@@ -807,6 +806,21 @@ export function pluginRoutes(
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
+    }
+
+    if (plugin.key === "homio.atlas-bridge") {
+      const body = req.body as {
+        companyId?: string;
+        params?: Record<string, unknown>;
+        renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
+      } | undefined;
+      if (body?.companyId) {
+        assertCompanyAccess(req, body.companyId);
+      } else {
+        assertBoard(req);
+      }
+    } else {
+      assertBoard(req);
     }
 
     // Validate plugin is in ready state
@@ -876,7 +890,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/bridge/action", async (req, res) => {
-    assertBoard(req);
 
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
@@ -890,6 +903,21 @@ export function pluginRoutes(
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
+    }
+
+    if (plugin.key === "homio.atlas-bridge") {
+      const body = req.body as {
+        companyId?: string;
+        params?: Record<string, unknown>;
+        renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
+      } | undefined;
+      if (body?.companyId) {
+        assertCompanyAccess(req, body.companyId);
+      } else {
+        assertBoard(req);
+      }
+    } else {
+      assertBoard(req);
     }
 
     // Validate plugin is in ready state
@@ -960,7 +988,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/data/:key", async (req, res) => {
-    assertBoard(req);
 
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
@@ -974,6 +1001,21 @@ export function pluginRoutes(
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
+    }
+
+    if (plugin.key === "homio.atlas-bridge") {
+      const body = req.body as {
+        companyId?: string;
+        params?: Record<string, unknown>;
+        renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
+      } | undefined;
+      if (body?.companyId) {
+        assertCompanyAccess(req, body.companyId);
+      } else {
+        assertBoard(req);
+      }
+    } else {
+      assertBoard(req);
     }
 
     // Validate plugin is in ready state
@@ -1039,7 +1081,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/actions/:key", async (req, res) => {
-    assertBoard(req);
 
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
@@ -1053,6 +1094,21 @@ export function pluginRoutes(
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
+    }
+
+    if (plugin.key === "homio.atlas-bridge") {
+      const body = req.body as {
+        companyId?: string;
+        params?: Record<string, unknown>;
+        renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
+      } | undefined;
+      if (body?.companyId) {
+        assertCompanyAccess(req, body.companyId);
+      } else {
+        assertBoard(req);
+      }
+    } else {
+      assertBoard(req);
     }
 
     // Validate plugin is in ready state
