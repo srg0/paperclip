@@ -1,5 +1,7 @@
 import type { ServerAdapterModule } from "./types.js";
 import { getAdapterSessionManagement } from "@paperclipai/adapter-utils";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   execute as claudeExecute,
   listClaudeSkills,
@@ -81,6 +83,14 @@ import {
 } from "hermes-paperclip-adapter";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
+import { createConfigDrivenSkillHandlers } from "./skill-sync.js";
+
+const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const openclawSkillHandlers = createConfigDrivenSkillHandlers({
+  adapterType: "openclaw_gateway",
+  moduleDir: __moduleDir,
+  configuredDetail: "Skill is configured in Paperclip and forwarded to the gateway execution context.",
+});
 
 const claudeLocalAdapter: ServerAdapterModule = {
   type: "claude_local",
@@ -142,6 +152,8 @@ const openclawGatewayAdapter: ServerAdapterModule = {
   type: "openclaw_gateway",
   execute: openclawGatewayExecute,
   testEnvironment: openclawGatewayTestEnvironment,
+  listSkills: openclawSkillHandlers.listSkills,
+  syncSkills: openclawSkillHandlers.syncSkills,
   models: openclawGatewayModels,
   supportsLocalAgentJwt: false,
   agentConfigurationDoc: openclawGatewayAgentConfigurationDoc,

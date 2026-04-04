@@ -1,11 +1,23 @@
 import type { ServerAdapterModule } from "../types.js";
 import { execute } from "./execute.js";
 import { testEnvironment } from "./test.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createConfigDrivenSkillHandlers } from "../skill-sync.js";
+
+const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const { listSkills, syncSkills } = createConfigDrivenSkillHandlers({
+  adapterType: "process",
+  moduleDir: __moduleDir,
+  configuredDetail: "Skill is configured for this process worker and will be available on the next run.",
+});
 
 export const processAdapter: ServerAdapterModule = {
   type: "process",
   execute,
   testEnvironment,
+  listSkills,
+  syncSkills,
   models: [],
   agentConfigurationDoc: `# process agent configuration
 
