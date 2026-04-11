@@ -829,6 +829,7 @@ export interface PluginIssueDocumentsClient {
     title?: string;
     format?: string;
     changeSummary?: string;
+    baseRevisionId?: string | null;
   }): Promise<IssueDocument>;
 
   /**
