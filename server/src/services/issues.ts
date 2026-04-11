@@ -118,9 +118,28 @@ function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
 }
 
 const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+const ANSI_ESCAPE_SEQUENCE_REGEX = /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+const ZERO_WIDTH_CHAR_REGEX = /[\u200B-\u200D\u2060\uFEFF]/g;
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
+}
+
+export function sanitizeIssueCommentBody(body: string): string {
+  const original = String(body ?? "");
+  const normalized = original
+    .replace(/\r\n?/g, "\n")
+    .replace(ANSI_ESCAPE_SEQUENCE_REGEX, "")
+    .replace(/\u0008/g, "")
+    .replace(ZERO_WIDTH_CHAR_REGEX, "")
+    .replace(/\uFFFD/g, "")
+    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, " ")
+    .replace(/[^\S\n]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (normalized.length > 0) return normalized;
+  return original.trim();
 }
 
 async function getProjectDefaultGoalId(
@@ -1554,7 +1573,8 @@ export function issueService(db: Db) {
       const currentUserRedactionOptions = {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
-      const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
+      const sanitizedBody = sanitizeIssueCommentBody(body);
+      const redactedBody = redactCurrentUserText(sanitizedBody, currentUserRedactionOptions);
       const [comment] = await db
         .insert(issueComments)
         .values({
