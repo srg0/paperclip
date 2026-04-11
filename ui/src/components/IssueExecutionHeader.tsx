@@ -99,7 +99,7 @@ export function IssueExecutionHeader({
       data-testid="issue-execution-header"
       className="overflow-hidden rounded-2xl border border-border/70 bg-card/80 shadow-[0_26px_80px_-44px_rgba(15,23,42,0.5)]"
     >
-      <div className="border-b border-border/70 bg-gradient-to-r from-background via-background to-cyan-500/[0.04] px-4 py-4 sm:px-5">
+      <div className="border-b border-border/70 bg-gradient-to-r from-background via-background to-cyan-500/[0.04] dark:to-cyan-500/[0.08] px-4 py-4 sm:px-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-border/70 bg-background px-2.5 py-1 text-[11px] font-semibold tracking-[0.14em] text-muted-foreground">
             {issueKey}
@@ -111,7 +111,7 @@ export function IssueExecutionHeader({
             {model.executionStateLabel}
           </span>
           {model.standLabel ? (
-            <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-1 text-xs font-medium text-cyan-700 dark:text-cyan-300">
+            <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 dark:bg-cyan-500/15 px-2.5 py-1 text-xs font-medium text-cyan-700 dark:text-cyan-300">
               {model.standLabel}
             </span>
           ) : null}
@@ -223,7 +223,7 @@ export function IssueExecutionHeader({
                   href={model.standUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center justify-between rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-700 transition-colors hover:bg-cyan-500/15 dark:text-cyan-300"
+                  className="flex items-center justify-between rounded-xl border border-cyan-500/20 dark:border-cyan-500/30 bg-cyan-500/10 dark:bg-cyan-500/15 px-4 py-3 text-sm text-cyan-700 transition-colors hover:bg-cyan-500/15 dark:hover:bg-cyan-500/20 dark:text-cyan-300"
                 >
                   <span>Open stand</span>
                   <ExternalLink className="h-4 w-4" />
@@ -234,7 +234,7 @@ export function IssueExecutionHeader({
                   href={model.evidenceUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 transition-colors hover:bg-emerald-500/15 dark:text-emerald-300"
+                  className="flex items-center justify-between rounded-xl border border-emerald-500/20 dark:border-emerald-500/30 bg-emerald-500/10 dark:bg-emerald-500/15 px-4 py-3 text-sm text-emerald-700 transition-colors hover:bg-emerald-500/15 dark:hover:bg-emerald-500/20 dark:text-emerald-300"
                 >
                   <span>Open evidence PNG</span>
                   <ExternalLink className="h-4 w-4" />
