@@ -47,6 +47,7 @@ import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
 import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@paperclipai/plugin-sdk";
+import { forbidden } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
 
@@ -313,6 +314,25 @@ export function pluginRoutes(
     loader,
     workerManager: bridgeDeps?.workerManager ?? webhookDeps?.workerManager,
   });
+
+  function assertPluginBridgeAccess(req: Request, companyId: string | undefined) {
+    if (req.actor.type === "board") {
+      if (companyId) {
+        assertCompanyAccess(req, companyId);
+      }
+      return;
+    }
+
+    if (req.actor.type === "agent") {
+      if (!companyId?.trim()) {
+        throw forbidden("companyId is required for agent bridge access");
+      }
+      assertCompanyAccess(req, companyId);
+      return;
+    }
+
+    throw forbidden("Board or agent access required");
+  }
 
   async function resolvePluginAuditCompanyIds(req: Request): Promise<string[]> {
     if (typeof (db as { select?: unknown }).select === "function") {
@@ -793,8 +813,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/bridge/data", async (req, res) => {
-    assertBoard(req);
-
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
@@ -826,9 +844,7 @@ export function pluginRoutes(
       return;
     }
 
-    if (body.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertPluginBridgeAccess(req, body.companyId);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -876,8 +892,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/bridge/action", async (req, res) => {
-    assertBoard(req);
-
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
@@ -909,9 +923,7 @@ export function pluginRoutes(
       return;
     }
 
-    if (body.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertPluginBridgeAccess(req, body.companyId);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -960,8 +972,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/data/:key", async (req, res) => {
-    assertBoard(req);
-
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
@@ -992,9 +1002,7 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    if (body?.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertPluginBridgeAccess(req, body?.companyId);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1039,8 +1047,6 @@ export function pluginRoutes(
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/actions/:key", async (req, res) => {
-    assertBoard(req);
-
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
@@ -1071,9 +1077,7 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    if (body?.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertPluginBridgeAccess(req, body?.companyId);
 
     try {
       const result = await bridgeDeps.workerManager.call(
