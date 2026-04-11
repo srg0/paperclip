@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+  activityLog,
   agents,
   agentWakeupRequests,
   companies,
@@ -49,6 +50,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
     childProcesses.clear();
     await db.delete(issues);
+    await db.delete(activityLog);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
@@ -67,6 +69,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
   async function seedRunFixture(input?: {
     adapterType?: string;
+    agentStatus?: "active" | "paused" | "terminated" | "pending_approval";
     runStatus?: "running" | "queued" | "failed";
     processPid?: number | null;
     processLossRetryCount?: number;
@@ -94,7 +97,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       companyId,
       name: "CodexCoder",
       role: "engineer",
-      status: "paused",
+      status: input?.agentStatus ?? "paused",
       adapterType: input?.adapterType ?? "codex_local",
       adapterConfig: {},
       runtimeConfig: {},
@@ -251,5 +254,81 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const run = await heartbeat.getRun(runId);
     expect(run?.errorCode).toBeNull();
     expect(run?.error).toBeNull();
+  });
+
+  it("defers follow-up instead of coalescing into an already running issue execution", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      agentStatus: "active",
+      runStatus: "running",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const wakeResult = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      contextSnapshot: { issueId, followup: true },
+      reason: "follow_up",
+      payload: { issueId, followup: true },
+    });
+
+    expect(wakeResult).toBeNull();
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBe(runId);
+
+    const wakes = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId));
+    expect(wakes.some((row) => row.status === "coalesced")).toBe(false);
+    expect(wakes.some((row) => row.status === "deferred_issue_execution")).toBe(true);
+  });
+
+  it("defers follow-up instead of spawning a new root run while process-loss retry is still pending", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      agentStatus: "active",
+      runStatus: "failed",
+      processPid: 999_999_999,
+      runErrorCode: "process_lost",
+      runError: "Process lost -- child pid 999999999 is no longer running; retrying once",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const wakeResult = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      contextSnapshot: { issueId, followup: true },
+      reason: "follow_up",
+      payload: { issueId, followup: true },
+    });
+
+    expect(wakeResult).toBeNull();
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBe(runId);
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.id).toBe(runId);
+
+    const deferredWake = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId))
+      .then((rows) =>
+        rows.find((row) => row.status === "deferred_issue_execution" && row.reason === "issue_execution_process_loss_retry_pending") ?? null,
+      );
+    expect(deferredWake).toBeTruthy();
   });
 });
