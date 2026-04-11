@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import { isUuidLike } from "@paperclipai/shared";
 import { forbidden, unauthorized } from "../errors.js";
 
 export function assertBoard(req: Request) {
@@ -34,12 +35,13 @@ export function getActorInfo(req: Request) {
   if (req.actor.type === "none") {
     throw unauthorized();
   }
+  const runId = req.actor.runId && isUuidLike(req.actor.runId) ? req.actor.runId : null;
   if (req.actor.type === "agent") {
     return {
       actorType: "agent" as const,
       actorId: req.actor.agentId ?? "unknown-agent",
       agentId: req.actor.agentId ?? null,
-      runId: req.actor.runId ?? null,
+      runId,
     };
   }
 
@@ -47,6 +49,6 @@ export function getActorInfo(req: Request) {
     actorType: "user" as const,
     actorId: req.actor.userId ?? "board",
     agentId: null,
-    runId: req.actor.runId ?? null,
+    runId,
   };
 }
