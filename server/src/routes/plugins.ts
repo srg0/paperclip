@@ -334,6 +334,24 @@ export function pluginRoutes(
     throw forbidden("Board or agent access required");
   }
 
+  function resolveBridgeCompanyId(
+    body:
+      | {
+          companyId?: string;
+          params?: Record<string, unknown>;
+        }
+      | undefined,
+  ): string | undefined {
+    if (typeof body?.companyId === "string" && body.companyId.trim()) {
+      return body.companyId;
+    }
+    const nestedCompanyId = body?.params?.companyId;
+    if (typeof nestedCompanyId === "string" && nestedCompanyId.trim()) {
+      return nestedCompanyId;
+    }
+    return undefined;
+  }
+
   async function resolvePluginAuditCompanyIds(req: Request): Promise<string[]> {
     if (typeof (db as { select?: unknown }).select === "function") {
       const rows = await db
@@ -844,7 +862,7 @@ export function pluginRoutes(
       return;
     }
 
-    assertPluginBridgeAccess(req, body.companyId);
+    assertPluginBridgeAccess(req, resolveBridgeCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -923,7 +941,7 @@ export function pluginRoutes(
       return;
     }
 
-    assertPluginBridgeAccess(req, body.companyId);
+    assertPluginBridgeAccess(req, resolveBridgeCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1002,7 +1020,7 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    assertPluginBridgeAccess(req, body?.companyId);
+    assertPluginBridgeAccess(req, resolveBridgeCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1077,7 +1095,7 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    assertPluginBridgeAccess(req, body?.companyId);
+    assertPluginBridgeAccess(req, resolveBridgeCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(

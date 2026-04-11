@@ -105,6 +105,38 @@ describe("plugin bridge agent access", () => {
     });
   });
 
+  it("allows legacy agent bridge calls when companyId is nested inside params", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "agent_jwt",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .post("/api/plugins/homio.atlas-bridge/actions/atlas-bridge-sync-issue-projection")
+      .send({
+        params: {
+          companyId: "company-1",
+          issueId: "issue-1",
+          reason: "atlas_executor_prelaunch",
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { ok: true } });
+    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-row-1", "performAction", {
+      key: "atlas-bridge-sync-issue-projection",
+      params: {
+        companyId: "company-1",
+        issueId: "issue-1",
+        reason: "atlas_executor_prelaunch",
+      },
+      renderEnvironment: null,
+    });
+  });
+
   it("rejects agent bridge calls without companyId", async () => {
     const app = createApp({
       type: "agent",
