@@ -12,6 +12,7 @@ const PROMPT_KEY = "promptTemplate";
 /** @deprecated Use the managed instructions bundle system instead. */
 const BOOTSTRAP_PROMPT_KEY = "bootstrapPromptTemplate";
 const LEGACY_PROMPT_TEMPLATE_PATH = "promptTemplate.legacy.md";
+const RUNTIME_PROMPT_TEMPLATE_MIRROR_ADAPTER_TYPES = new Set(["process"]);
 const IGNORED_INSTRUCTIONS_FILE_NAMES = new Set([".DS_Store", "Thumbs.db", "Desktop.ini"]);
 const IGNORED_INSTRUCTIONS_DIRECTORY_NAMES = new Set([
   ".git",
@@ -31,6 +32,7 @@ type AgentLike = {
   id: string;
   companyId: string;
   name: string;
+  adapterType?: string;
   adapterConfig: unknown;
 };
 
@@ -85,6 +87,33 @@ function asString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function shouldMirrorRuntimePromptTemplate(agent: Pick<AgentLike, "adapterType">) {
+  return agent.adapterType !== undefined && RUNTIME_PROMPT_TEMPLATE_MIRROR_ADAPTER_TYPES.has(agent.adapterType);
+}
+
+function applyRuntimePromptTemplateMirror(
+  agent: Pick<AgentLike, "adapterType">,
+  config: Record<string, unknown>,
+  entryContent: string | null,
+  options?: { clearLegacyPromptTemplate?: boolean },
+): Record<string, unknown> {
+  const next = { ...config };
+  if (shouldMirrorRuntimePromptTemplate(agent)) {
+    if (entryContent !== null) {
+      next[PROMPT_KEY] = entryContent;
+    }
+    if (options?.clearLegacyPromptTemplate) {
+      delete next[BOOTSTRAP_PROMPT_KEY];
+    }
+    return next;
+  }
+  if (options?.clearLegacyPromptTemplate) {
+    delete next[PROMPT_KEY];
+    delete next[BOOTSTRAP_PROMPT_KEY];
+  }
+  return next;
 }
 
 function isBundleMode(value: unknown): value is BundleMode {
@@ -429,6 +458,15 @@ async function writeBundleFiles(
   }
 }
 
+async function readBundleEntryContent(agent: AgentLike, state: BundleState): Promise<string> {
+  if (state.rootPath) {
+    const absoluteEntryPath = resolvePathWithinRoot(state.rootPath, state.entryFile);
+    const content = await fs.readFile(absoluteEntryPath, "utf8").catch(() => null);
+    if (content !== null) return content;
+  }
+  return readLegacyInstructions(agent, state.config);
+}
+
 export function syncInstructionsBundleConfigFromFilePath(
   agent: AgentLike,
   adapterConfig: Record<string, unknown>,
@@ -512,7 +550,12 @@ export function agentInstructionsService() {
     const derived = deriveBundleState(agent);
     const current = await recoverManagedBundleState(agent, derived);
     if (current.rootPath && current.mode) {
-      const adapterConfig = buildPersistedBundleConfig(derived, current, options);
+      const adapterConfig = applyRuntimePromptTemplateMirror(
+        agent,
+        buildPersistedBundleConfig(derived, current, options),
+        await readBundleEntryContent(agent, current),
+        options,
+      );
       return {
         adapterConfig,
         state: deriveBundleState({ ...agent, adapterConfig }),
@@ -531,17 +574,22 @@ export function agentInstructionsService() {
 
     const entryPath = resolvePathWithinRoot(managedRoot, entryFile);
     const entryStat = await statIfExists(entryPath);
+    let entryContent = "";
     if (!entryStat?.isFile()) {
       const legacyInstructions = await readLegacyInstructions(agent, current.config);
+      entryContent = legacyInstructions;
       if (legacyInstructions.trim().length > 0) {
         await fs.mkdir(path.dirname(entryPath), { recursive: true });
         await fs.writeFile(entryPath, legacyInstructions, "utf8");
       }
+    } else {
+      entryContent = await fs.readFile(entryPath, "utf8");
     }
 
+    const adapterConfig = applyRuntimePromptTemplateMirror(agent, nextConfig, entryContent, options);
     return {
-      adapterConfig: nextConfig,
-      state: deriveBundleState({ ...agent, adapterConfig: nextConfig }),
+      adapterConfig,
+      state: deriveBundleState({ ...agent, adapterConfig }),
     };
   }
 
@@ -558,6 +606,7 @@ export function agentInstructionsService() {
     const nextMode = input.mode ?? state.mode ?? "managed";
     const nextEntryFile = input.entryFile ? normalizeRelativeFilePath(input.entryFile) : state.entryFile;
     let nextRootPath: string;
+    let nextEntryContent = "";
 
     if (nextMode === "managed") {
       nextRootPath = resolveManagedInstructionsRoot(agent);
@@ -582,16 +631,18 @@ export function agentInstructionsService() {
     }
     const refreshedFiles = existingFiles.length === 0 ? await listFilesRecursive(nextRootPath) : existingFiles;
     if (!refreshedFiles.includes(nextEntryFile)) {
-      const nextEntryContent = exported.files[nextEntryFile] ?? exported.files[exported.entryFile] ?? "";
+      nextEntryContent = exported.files[nextEntryFile] ?? exported.files[exported.entryFile] ?? "";
       await writeBundleFiles(nextRootPath, { [nextEntryFile]: nextEntryContent });
+    } else {
+      nextEntryContent = await fs.readFile(resolvePathWithinRoot(nextRootPath, nextEntryFile), "utf8").catch(() => "");
     }
 
-    const nextConfig = applyBundleConfig(state.config, {
+    const nextConfig = applyRuntimePromptTemplateMirror(agent, applyBundleConfig(state.config, {
       mode: nextMode,
       rootPath: nextRootPath,
       entryFile: nextEntryFile,
       clearLegacyPromptTemplate: input.clearLegacyPromptTemplate,
-    });
+    }), nextEntryContent, input);
     const nextBundle = await getBundle({ ...agent, adapterConfig: nextConfig });
     return { bundle: nextBundle, adapterConfig: nextConfig };
   }
@@ -608,10 +659,10 @@ export function agentInstructionsService() {
   }> {
     const current = deriveBundleState(agent);
     if (relativePath === LEGACY_PROMPT_TEMPLATE_PATH) {
-      const adapterConfig: Record<string, unknown> = {
+      const adapterConfig: Record<string, unknown> = applyRuntimePromptTemplateMirror(agent, {
         ...current.config,
         [PROMPT_KEY]: content,
-      };
+      }, content, options);
       const nextAgent = { ...agent, adapterConfig };
       const [bundle, file] = await Promise.all([
         getBundle(nextAgent),
@@ -624,12 +675,16 @@ export function agentInstructionsService() {
     const absolutePath = resolvePathWithinRoot(prepared.state.rootPath!, relativePath);
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
     await fs.writeFile(absolutePath, content, "utf8");
-    const nextAgent = { ...agent, adapterConfig: prepared.adapterConfig };
+    const nextAdapterConfig =
+      shouldMirrorRuntimePromptTemplate(agent) && normalizeRelativeFilePath(relativePath) === prepared.state.entryFile
+        ? applyRuntimePromptTemplateMirror(agent, prepared.adapterConfig, content, options)
+        : prepared.adapterConfig;
+    const nextAgent = { ...agent, adapterConfig: nextAdapterConfig };
     const [bundle, file] = await Promise.all([
       getBundle(nextAgent),
       readFile(nextAgent, relativePath),
     ]);
-    return { bundle, file, adapterConfig: prepared.adapterConfig };
+    return { bundle, file, adapterConfig: nextAdapterConfig };
   }
 
   async function deleteFile(agent: AgentLike, relativePath: string): Promise<{
@@ -718,8 +773,12 @@ export function agentInstructionsService() {
       entryFile,
       clearLegacyPromptTemplate: options?.clearLegacyPromptTemplate,
     });
-    const bundle = await getBundle({ ...agent, adapterConfig });
-    return { bundle, adapterConfig };
+    const entryContent = normalizedEntries.find(([relativePath]) => relativePath === entryFile)?.[1]
+      ?? normalizedEntries.find(([relativePath]) => relativePath === ENTRY_FILE_DEFAULT)?.[1]
+      ?? "";
+    const mirroredAdapterConfig = applyRuntimePromptTemplateMirror(agent, adapterConfig, entryContent, options);
+    const bundle = await getBundle({ ...agent, adapterConfig: mirroredAdapterConfig });
+    return { bundle, adapterConfig: mirroredAdapterConfig };
   }
 
   return {

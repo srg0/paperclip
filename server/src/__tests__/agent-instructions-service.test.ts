@@ -8,6 +8,7 @@ type TestAgent = {
   id: string;
   companyId: string;
   name: string;
+  adapterType?: string;
   adapterConfig: Record<string, unknown>;
 };
 
@@ -15,11 +16,12 @@ async function makeTempDir(prefix: string) {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
-function makeAgent(adapterConfig: Record<string, unknown>): TestAgent {
+function makeAgent(adapterConfig: Record<string, unknown>, adapterType?: string): TestAgent {
   return {
     id: "agent-1",
     companyId: "company-1",
     name: "Agent 1",
+    adapterType,
     adapterConfig,
   };
 }
@@ -79,6 +81,50 @@ describe("agent instructions service", () => {
     expect(result.bundle.files.map((file) => file.path)).toEqual(["AGENTS.md", "docs/TOOLS.md"]);
     await expect(fs.readFile(path.join(result.bundle.managedRootPath, "AGENTS.md"), "utf8")).resolves.toBe("# External Agent\n");
     await expect(fs.readFile(path.join(result.bundle.managedRootPath, "docs", "TOOLS.md"), "utf8")).resolves.toBe("## Tools\n");
+  });
+
+  it("mirrors managed process bundle entry content into promptTemplate for runtime compatibility", async () => {
+    const paperclipHome = await makeTempDir("paperclip-agent-instructions-process-home-");
+    cleanupDirs.add(paperclipHome);
+    process.env.PAPERCLIP_HOME = paperclipHome;
+    process.env.PAPERCLIP_INSTANCE_ID = "test-instance";
+
+    const managedRoot = path.join(
+      paperclipHome,
+      "instances",
+      "test-instance",
+      "companies",
+      "company-1",
+      "agents",
+      "agent-1",
+      "instructions",
+    );
+    await fs.mkdir(managedRoot, { recursive: true });
+    await fs.writeFile(path.join(managedRoot, "AGENTS.md"), "# Process Agent\n", "utf8");
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: managedRoot,
+      instructionsEntryFile: "AGENTS.md",
+      instructionsFilePath: path.join(managedRoot, "AGENTS.md"),
+    }, "process");
+
+    const bundle = await svc.getBundle(agent);
+    expect(bundle.legacyPromptTemplateActive).toBe(false);
+    expect(bundle.files.map((file) => file.path)).toEqual(["AGENTS.md"]);
+
+    const result = await svc.writeFile(agent, "AGENTS.md", "# Updated Process Agent\n");
+
+    expect(result.adapterConfig).toMatchObject({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: managedRoot,
+      instructionsEntryFile: "AGENTS.md",
+      instructionsFilePath: path.join(managedRoot, "AGENTS.md"),
+      promptTemplate: "# Updated Process Agent\n",
+    });
+    expect(result.bundle.legacyPromptTemplateActive).toBe(true);
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["AGENTS.md", "promptTemplate.legacy.md"]);
   });
 
   it("creates the target entry file when switching to a new external root", async () => {
