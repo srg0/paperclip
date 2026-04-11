@@ -25,8 +25,16 @@ function parseNumber(value: string | undefined, fallback: number) {
   return Math.floor(parsed);
 }
 
+function firstNonEmptyEnv(...values: Array<string | undefined>) {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
 function jwtConfig() {
-  const secret = process.env.PAPERCLIP_AGENT_JWT_SECRET;
+  const secret = firstNonEmptyEnv(process.env.PAPERCLIP_AGENT_JWT_SECRET, process.env.BETTER_AUTH_SECRET);
   if (!secret) return null;
 
   return {
