@@ -50,11 +50,43 @@ RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" &
 FROM base AS production
 ARG USER_UID=1000
 ARG USER_GID=1000
+ARG CLAUDE_CODE_VERSION=2.1.101
+ARG OPENAI_CODEX_VERSION=0.120.0
+ARG OPENCODE_AI_VERSION=1.4.3
+ARG CURSOR_AGENT_INSTALL_URL=https://cursor.com/install
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
-RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai \
-  && mkdir -p /paperclip \
-  && chown node:node /paperclip
+RUN set -eu; \
+  retry() { \
+    attempts="$1"; shift; \
+    count=1; \
+    while [ "$count" -le "$attempts" ]; do \
+      if "$@"; then return 0; fi; \
+      if [ "$count" -eq "$attempts" ]; then return 1; fi; \
+      sleep "$((count * 10))"; \
+      count="$((count + 1))"; \
+    done; \
+  }; \
+  npm config set fetch-retries 5; \
+  npm config set fetch-retry-factor 2; \
+  npm config set fetch-retry-mintimeout 20000; \
+  npm config set fetch-retry-maxtimeout 120000; \
+  npm config set fetch-timeout 300000; \
+  retry 5 npm install --global --omit=dev --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"; \
+  retry 5 npm install --global --omit=dev --no-audit --no-fund "@openai/codex@${OPENAI_CODEX_VERSION}"; \
+  retry 5 npm install --global --omit=dev --no-audit --no-fund "opencode-ai@${OPENCODE_AI_VERSION}"; \
+  export HOME=/usr/local/share/cursor-agent-home; \
+  rm -rf "${HOME}" /tmp/cursor-install.sh; \
+  mkdir -p "${HOME}"; \
+  retry 5 curl --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 -fsSL "${CURSOR_AGENT_INSTALL_URL}" -o /tmp/cursor-install.sh; \
+  bash /tmp/cursor-install.sh; \
+  cursor_agent_bin="$(find "${HOME}"/.local/share/cursor-agent/versions -path '*/cursor-agent' -type f | sort | tail -n 1)"; \
+  test -n "${cursor_agent_bin}"; \
+  ln -snf "${cursor_agent_bin}" /usr/local/bin/cursor-agent; \
+  ln -snf /usr/local/bin/cursor-agent /usr/local/bin/agent; \
+  rm -f /tmp/cursor-install.sh; \
+  mkdir -p /paperclip; \
+  chown -R node:node /paperclip /usr/local/share/cursor-agent-home
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
