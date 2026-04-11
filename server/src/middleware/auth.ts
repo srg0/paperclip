@@ -3,6 +3,7 @@ import type { Request, RequestHandler } from "express";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agentApiKeys, agents, companyMemberships, instanceUserRoles } from "@paperclipai/db";
+import { isUuidLike } from "@paperclipai/shared";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
@@ -11,6 +12,13 @@ import { boardAuthService } from "../services/board-auth.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function normalizeRunIdHeader(runIdHeader: string | undefined): string | undefined {
+  if (!runIdHeader) return undefined;
+  const trimmed = runIdHeader.trim();
+  if (!trimmed) return undefined;
+  return isUuidLike(trimmed) ? trimmed : undefined;
 }
 
 interface ActorMiddlewareOptions {
@@ -26,7 +34,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         ? { type: "board", userId: "local-board", isInstanceAdmin: true, source: "local_implicit" }
         : { type: "none", source: "none" };
 
-    const runIdHeader = req.header("x-paperclip-run-id");
+    const runIdHeader = normalizeRunIdHeader(req.header("x-paperclip-run-id"));
 
     const authHeader = req.header("authorization");
     if (!authHeader?.toLowerCase().startsWith("bearer ")) {
