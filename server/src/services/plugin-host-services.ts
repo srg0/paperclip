@@ -822,6 +822,7 @@ export function buildHostServices(
           title: params.title ?? null,
           format: params.format ?? "markdown",
           changeSummary: params.changeSummary ?? null,
+          baseRevisionId: params.baseRevisionId ?? null,
         });
         return result.document as any;
       },
