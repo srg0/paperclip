@@ -3,6 +3,7 @@ import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { ApiError } from "../api/client";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
@@ -28,10 +29,12 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
+import { IssueExecutionHeader } from "../components/IssueExecutionHeader";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LiveRunWidget } from "../components/LiveRunWidget";
+import { buildIssueExecutionHeaderModel } from "../lib/issue-execution-flow";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
@@ -283,6 +286,20 @@ export function IssueDetail() {
   });
 
   const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
+  const { data: executionDocument } = useQuery({
+    queryKey: [...queryKeys.issues.documents(issueId!), "atlas-execution", "detail"],
+    queryFn: async () => {
+      try {
+        return await issuesApi.getDocument(issueId!, "atlas-execution");
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: !!issueId,
+    retry: false,
+    refetchInterval: hasLiveRuns ? 3000 : false,
+  });
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
@@ -511,6 +528,19 @@ export function IssueDetail() {
       hasTokens,
     };
   }, [linkedRuns]);
+
+  const executionHeaderModel = useMemo(() => {
+    if (!issue) return null;
+    return buildIssueExecutionHeaderModel({
+      issue,
+      executionDocument,
+      linkedRuns: linkedRuns ?? [],
+      liveRuns: liveRuns ?? [],
+      activeRun,
+      activity: activity ?? [],
+      agents: agents ?? [],
+    });
+  }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents]);
 
   const invalidateIssue = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
@@ -1078,6 +1108,14 @@ export function IssueDetail() {
           }}
         />
       </div>
+
+      {executionHeaderModel ? (
+        <IssueExecutionHeader
+          model={executionHeaderModel}
+          issueKey={issue.identifier ?? issue.id.slice(0, 8)}
+          issueStatus={issue.status}
+        />
+      ) : null}
 
       <PluginSlotOutlet
         slotTypes={["toolbarButton", "contextMenuItem"]}
