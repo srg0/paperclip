@@ -3264,13 +3264,13 @@ export function heartbeatService(db: Db) {
           activeExecutionRun = null;
         }
 
+        const processLossRetryCandidate = !activeExecutionRun ? currentExecutionRun : null;
         const waitingForProcessLossRetry =
-          !activeExecutionRun &&
-          Boolean(currentExecutionRun) &&
-          currentExecutionRun.status === "failed" &&
-          currentExecutionRun.errorCode === "process_lost" &&
-          Boolean(currentExecutionRun.processPid) &&
-          (currentExecutionRun.processLossRetryCount ?? 0) < 1 &&
+          processLossRetryCandidate !== null &&
+          processLossRetryCandidate.status === "failed" &&
+          processLossRetryCandidate.errorCode === "process_lost" &&
+          Boolean(processLossRetryCandidate.processPid) &&
+          (processLossRetryCandidate.processLossRetryCount ?? 0) < 1 &&
           isTrackedLocalChildProcessAdapter(agent.adapterType);
 
         if (!activeExecutionRun && issue.executionRunId && !waitingForProcessLossRetry) {
