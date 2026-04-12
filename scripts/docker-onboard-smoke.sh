@@ -7,6 +7,7 @@ HOST_PORT="${HOST_PORT:-3131}"
 PAPERCLIPAI_VERSION="${PAPERCLIPAI_VERSION:-latest}"
 DATA_DIR="${DATA_DIR:-$REPO_ROOT/data/docker-onboard-smoke}"
 HOST_UID="${HOST_UID:-$(id -u)}"
+SMOKE_RUNTIME="${SMOKE_RUNTIME:-npm}"
 SMOKE_DETACH="${SMOKE_DETACH:-false}"
 SMOKE_METADATA_FILE="${SMOKE_METADATA_FILE:-}"
 PAPERCLIP_DEPLOYMENT_MODE="${PAPERCLIP_DEPLOYMENT_MODE:-authenticated}"
@@ -17,6 +18,8 @@ SMOKE_ADMIN_NAME="${SMOKE_ADMIN_NAME:-Smoke Admin}"
 SMOKE_ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL:-smoke-admin@paperclip.local}"
 SMOKE_ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD:-paperclip-smoke-password}"
 CONTAINER_NAME="${IMAGE_NAME//[^a-zA-Z0-9_.-]/-}"
+SOURCE_REPO_PATH="/workspace/paperclip"
+SOURCE_WORKDIR="/paperclip/cache/source-runtime"
 LOG_PID=""
 COOKIE_JAR=""
 TMP_DIR=""
@@ -67,6 +70,81 @@ wait_for_http() {
   return 1
 }
 
+build_onboard_cmd() {
+  case "$SMOKE_RUNTIME" in
+    npm|"")
+      cat <<'EOF'
+set -euo pipefail
+mkdir -p "$PAPERCLIP_HOME"
+npx --yes "paperclipai@${PAPERCLIPAI_VERSION}" onboard --yes --data-dir "$PAPERCLIP_HOME"
+EOF
+      ;;
+    source)
+      cat <<'EOF'
+set -euo pipefail
+mkdir -p "$PAPERCLIP_HOME"
+mkdir -p /paperclip/cache/pnpm-store /paperclip/cache/source-runtime
+if [[ ! -f /paperclip/cache/source-runtime/.prepared ]]; then
+  rm -rf /paperclip/cache/source-runtime
+  mkdir -p /paperclip/cache/source-runtime
+  tar \
+    --exclude=node_modules \
+    --exclude=.git \
+    --exclude=.next \
+    --exclude=dist \
+    -cf - \
+    -C /workspace/paperclip \
+    . | tar -xf - -C /paperclip/cache/source-runtime
+  cd /paperclip/cache/source-runtime
+  env \
+    HOME="$HOME" \
+    npm_config_userconfig="$HOME/.npmrc" \
+    pnpm_config_store_dir="/paperclip/cache/pnpm-store" \
+    pnpm_config_virtual_store_dir=".pnpm" \
+    pnpm install --frozen-lockfile
+  env \
+    HOME="$HOME" \
+    npm_config_userconfig="$HOME/.npmrc" \
+    pnpm -r --if-present build
+  touch /paperclip/cache/source-runtime/.prepared
+fi
+cd /paperclip/cache/source-runtime
+env \
+  HOME="$HOME" \
+  npm_config_userconfig="$HOME/.npmrc" \
+  pnpm paperclipai onboard --yes --data-dir "$PAPERCLIP_HOME"
+EOF
+      ;;
+    *)
+      echo "Unsupported SMOKE_RUNTIME: $SMOKE_RUNTIME" >&2
+      return 1
+      ;;
+  esac
+}
+
+build_bootstrap_cmd() {
+  case "$SMOKE_RUNTIME" in
+    npm|"")
+      cat <<'EOF'
+timeout 20s npx --yes "paperclipai@${PAPERCLIPAI_VERSION}" auth bootstrap-ceo --data-dir "$PAPERCLIP_HOME" --base-url "$PAPERCLIP_PUBLIC_URL"
+EOF
+      ;;
+    source)
+      cat <<'EOF'
+cd /paperclip/cache/source-runtime
+env \
+  HOME="$HOME" \
+  npm_config_userconfig="$HOME/.npmrc" \
+  timeout 20s pnpm paperclipai auth bootstrap-ceo --data-dir "$PAPERCLIP_HOME" --base-url "$PAPERCLIP_PUBLIC_URL"
+EOF
+      ;;
+    *)
+      echo "Unsupported SMOKE_RUNTIME: $SMOKE_RUNTIME" >&2
+      return 1
+      ;;
+  esac
+}
+
 write_metadata_file() {
   if [[ -z "$SMOKE_METADATA_FILE" ]]; then
     return 0
@@ -80,12 +158,15 @@ write_metadata_file() {
     printf 'SMOKE_DATA_DIR=%q\n' "$DATA_DIR"
     printf 'SMOKE_IMAGE_NAME=%q\n' "$IMAGE_NAME"
     printf 'SMOKE_PAPERCLIPAI_VERSION=%q\n' "$PAPERCLIPAI_VERSION"
+    printf 'SMOKE_RUNTIME=%q\n' "$SMOKE_RUNTIME"
   } >"$SMOKE_METADATA_FILE"
 }
 
 generate_bootstrap_invite_url() {
   local bootstrap_output
   local bootstrap_status
+  local bootstrap_cmd
+  bootstrap_cmd="$(build_bootstrap_cmd)"
   if bootstrap_output="$(
     docker exec \
       -e PAPERCLIP_DEPLOYMENT_MODE="$PAPERCLIP_DEPLOYMENT_MODE" \
@@ -93,7 +174,7 @@ generate_bootstrap_invite_url() {
       -e PAPERCLIP_PUBLIC_URL="$PAPERCLIP_PUBLIC_URL" \
       -e PAPERCLIP_HOME="/paperclip" \
       "$CONTAINER_NAME" bash -lc \
-      'timeout 20s npx --yes "paperclipai@${PAPERCLIPAI_VERSION}" auth bootstrap-ceo --data-dir "$PAPERCLIP_HOME" --base-url "$PAPERCLIP_PUBLIC_URL"' \
+      "$bootstrap_cmd" \
       2>&1
   )"; then
     bootstrap_status=0
@@ -251,6 +332,7 @@ echo "    UI should be reachable at: http://localhost:$HOST_PORT"
 echo "    Public URL: $PAPERCLIP_PUBLIC_URL"
 echo "    Smoke auto-bootstrap: $SMOKE_AUTO_BOOTSTRAP"
 echo "    Detached mode: $SMOKE_DETACH"
+echo "    Runtime mode: $SMOKE_RUNTIME"
 echo "    Data dir: $DATA_DIR"
 echo "    Deployment: $PAPERCLIP_DEPLOYMENT_MODE/$PAPERCLIP_DEPLOYMENT_EXPOSURE"
 if [[ "$SMOKE_DETACH" != "true" ]]; then
@@ -258,17 +340,26 @@ if [[ "$SMOKE_DETACH" != "true" ]]; then
 fi
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+container_cmd="$(build_onboard_cmd)"
+docker_run_args=(
+  -d
+  --rm
+  --name "$CONTAINER_NAME"
+  -p "$HOST_PORT:3100"
+  -e HOST=0.0.0.0
+  -e PORT=3100
+  -e PAPERCLIP_DEPLOYMENT_MODE="$PAPERCLIP_DEPLOYMENT_MODE"
+  -e PAPERCLIP_DEPLOYMENT_EXPOSURE="$PAPERCLIP_DEPLOYMENT_EXPOSURE"
+  -e PAPERCLIP_PUBLIC_URL="$PAPERCLIP_PUBLIC_URL"
+  -e PAPERCLIPAI_VERSION="$PAPERCLIPAI_VERSION"
+  -v "$DATA_DIR:/paperclip"
+)
+if [[ "$SMOKE_RUNTIME" == "source" ]]; then
+  docker_run_args+=(-v "$REPO_ROOT:${SOURCE_REPO_PATH}")
+fi
 
-docker run -d --rm \
-  --name "$CONTAINER_NAME" \
-  -p "$HOST_PORT:3100" \
-  -e HOST=0.0.0.0 \
-  -e PORT=3100 \
-  -e PAPERCLIP_DEPLOYMENT_MODE="$PAPERCLIP_DEPLOYMENT_MODE" \
-  -e PAPERCLIP_DEPLOYMENT_EXPOSURE="$PAPERCLIP_DEPLOYMENT_EXPOSURE" \
-  -e PAPERCLIP_PUBLIC_URL="$PAPERCLIP_PUBLIC_URL" \
-  -v "$DATA_DIR:/paperclip" \
-  "$IMAGE_NAME" >/dev/null
+docker run "${docker_run_args[@]}" \
+  "$IMAGE_NAME" bash -lc "$container_cmd" >/dev/null
 
 if [[ "$SMOKE_DETACH" != "true" ]]; then
   docker logs -f "$CONTAINER_NAME" &
@@ -278,7 +369,12 @@ fi
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paperclip-onboard-smoke.XXXXXX")"
 COOKIE_JAR="$TMP_DIR/cookies.txt"
 
-if ! wait_for_http "$PAPERCLIP_PUBLIC_URL/api/health" 90 1; then
+startup_attempts=90
+if [[ "$SMOKE_RUNTIME" == "source" ]]; then
+  startup_attempts=300
+fi
+
+if ! wait_for_http "$PAPERCLIP_PUBLIC_URL/api/health" "$startup_attempts" 1; then
   echo "Smoke bootstrap failed: server did not become ready at $PAPERCLIP_PUBLIC_URL/api/health" >&2
   exit 1
 fi

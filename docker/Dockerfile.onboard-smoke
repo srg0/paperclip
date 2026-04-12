@@ -25,6 +25,7 @@ RUN apt-get update \
     > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update \
   && apt-get install -y --no-install-recommends nodejs \
+  && corepack enable \
   && locale-gen en_US.UTF-8 \
   && groupadd --gid 10001 paperclip \
   && useradd --create-home --shell /bin/bash --uid "${HOST_UID}" --gid 10001 paperclip \
