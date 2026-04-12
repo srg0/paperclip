@@ -296,9 +296,13 @@ function parseSystemActivity(text: string): { activityId?: string; name: string;
   };
 }
 
-function shouldHideNiceModeStderr(text: string): boolean {
+function shouldHideNiceModeBootstrapNoise(text: string): boolean {
   const normalized = compactWhitespace(text).toLowerCase();
-  return normalized.startsWith("[paperclip] skipping saved session resume");
+  if (!normalized.startsWith("[paperclip]")) return false;
+  return (
+    normalized.includes("skipping saved session resume")
+    || normalized.includes("using fallback workspace")
+  );
 }
 
 function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[] {
@@ -496,7 +500,7 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
     }
 
     if (entry.kind === "stderr") {
-      if (shouldHideNiceModeStderr(entry.text)) {
+      if (shouldHideNiceModeBootstrapNoise(entry.text)) {
         continue;
       }
       // Batch consecutive stderr entries into a single group
@@ -557,6 +561,9 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
       (block): block is Extract<TranscriptBlock, { type: "tool" }> =>
         block.type === "tool" && block.status === "running" && isCommandTool(block.name, block.input),
     );
+    if (shouldHideNiceModeBootstrapNoise(entry.text)) {
+      continue;
+    }
     if (activeCommandBlock) {
       activeCommandBlock.result = activeCommandBlock.result
         ? `${activeCommandBlock.result}${activeCommandBlock.result.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`}`
