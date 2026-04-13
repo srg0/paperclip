@@ -56,6 +56,14 @@ function extractAtlasTurnNumber(documentBody: string | null | undefined): number
   return match ? Number(match[1]) : null;
 }
 
+function extractFollowupTurnNumber(commentBody: string | null | undefined): number | null {
+  if (typeof commentBody !== "string" || commentBody.trim().length === 0) {
+    return null;
+  }
+  const match = commentBody.match(/(?:^|\n)\s*(?:##\s*)?Follow-up turn\s+(\d+)\b/i);
+  return match?.[1] ? Number(match[1]) : null;
+}
+
 function isAtlasMergeRequestIntent(commentBody: string | null | undefined): boolean {
   if (typeof commentBody !== "string" || commentBody.trim().length === 0) {
     return false;
@@ -428,8 +436,23 @@ export function issueRoutes(
     }
 
     const wantsMergeRequest = isAtlasMergeRequestIntent(input.commentBody);
-    const currentTurn = extractAtlasTurnNumber(executionDoc.body);
-    const nextTurn = currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null;
+    const explicitTurn = extractFollowupTurnNumber(input.commentBody);
+    const comments = explicitTurn
+      ? null
+      : await svc.listComments(input.issue.id, { order: "desc", limit: MAX_ISSUE_COMMENT_LIMIT });
+    const historyTurn = comments
+      ? comments.reduce<number | null>((maxTurn, comment) => {
+        const turn = extractFollowupTurnNumber(comment?.body ?? null);
+        if (!turn || !Number.isFinite(turn)) return maxTurn;
+        return maxTurn === null ? turn : Math.max(maxTurn, turn);
+      }, null)
+      : null;
+    const currentTurn = Math.max(
+      extractAtlasTurnNumber(executionDoc.body) ?? 0,
+      historyTurn ?? 0,
+    ) || null;
+    const nextTurn = explicitTurn
+      ?? (currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null);
     const commentContext = wantsMergeRequest
       ? { enrichedBody: input.commentBody, commentImages: [] as Array<Record<string, unknown>> }
       : await resolveAtlasFollowupCommentContext({

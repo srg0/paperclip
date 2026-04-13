@@ -11,6 +11,7 @@ const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
   listAttachments: vi.fn(),
+  listComments: vi.fn(),
 }));
 
 const mockDocumentService = vi.hoisted(() => ({
@@ -115,6 +116,7 @@ describe("issue comment reopen routes", () => {
     });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.listAttachments.mockResolvedValue([]);
+    mockIssueService.listComments.mockResolvedValue([]);
     mockStorage.getObject.mockResolvedValue({
       contentType: "image/png",
       stream: Readable.from([Buffer.from("image-bytes")]),
@@ -370,6 +372,64 @@ describe("issue comment reopen routes", () => {
             inlineDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
           }),
         ],
+      }),
+      renderEnvironment: null,
+    });
+  });
+
+  it("preserves an explicit follow-up turn number from the new comment body", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 1`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "## Follow-up turn 13\n\nПерепроверь сложный сценарий." });
+
+    expect(res.status).toBe(201);
+    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
+      key: "atlas-bridge-followup-issue-execution",
+      params: expect.objectContaining({
+        turnNumber: 13,
+        turnLabel: "TURN 13",
+      }),
+      renderEnvironment: null,
+    });
+  });
+
+  it("falls back to the latest follow-up turn from comment history when the execution document lags", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 1`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+    mockIssueService.listComments.mockResolvedValue([
+      { id: "older-1", body: "## Follow-up turn 12\n\nСтарый turn." },
+      { id: "older-2", body: "Обычный комментарий без turn." },
+    ]);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Новая доработка без явного turn в body." });
+
+    expect(res.status).toBe(201);
+    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
+      key: "atlas-bridge-followup-issue-execution",
+      params: expect.objectContaining({
+        turnNumber: 13,
+        turnLabel: "TURN 13",
       }),
       renderEnvironment: null,
     });
