@@ -241,6 +241,41 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("routes explicit MR approval comments to Atlas MR creation instead of follow-up", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Проверил руками, всё ок. Открой MR." });
+
+    expect(res.status).toBe(201);
+    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
+      key: "atlas-bridge-open-issue-merge-request",
+      params: {
+        issueId: "11111111-1111-4111-8111-111111111111",
+        companyId: "company-1",
+        commentId: "comment-1",
+      },
+      renderEnvironment: null,
+    });
+    expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      expect.objectContaining({
+        key: "atlas-bridge-followup-issue-execution",
+      }),
+    );
+  });
+
   it("starts atlas follow-up from the PATCH comment path too", async () => {
     const issue = makeIssue("todo");
     mockIssueService.getById.mockResolvedValue(issue);

@@ -56,6 +56,20 @@ function extractAtlasTurnNumber(documentBody: string | null | undefined): number
   return match ? Number(match[1]) : null;
 }
 
+function isAtlasMergeRequestIntent(commentBody: string | null | undefined): boolean {
+  if (typeof commentBody !== "string" || commentBody.trim().length === 0) {
+    return false;
+  }
+  const normalized = commentBody.trim().toLowerCase();
+  return (
+    normalized.includes("открой mr")
+    || normalized.includes("создай mr")
+    || normalized.includes("open mr")
+    || normalized.includes("create mr")
+    || normalized.includes("merge request")
+  );
+}
+
 export function issueRoutes(
   db: Db,
   storage: StorageService,
@@ -274,19 +288,28 @@ export function issueRoutes(
       return false;
     }
 
+    const wantsMergeRequest = isAtlasMergeRequestIntent(input.commentBody);
     const currentTurn = extractAtlasTurnNumber(executionDoc.body);
     const nextTurn = currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null;
 
     try {
       const trigger = deps.workerManager.call(plugin.id, "performAction", {
-        key: "atlas-bridge-followup-issue-execution",
-        params: {
-          issueId: input.issue.id,
-          companyId: input.issue.companyId,
-          commentId: input.commentId,
-          request: input.commentBody,
-          ...(nextTurn ? { turnNumber: nextTurn, turnLabel: `TURN ${nextTurn}` } : {}),
-        },
+        key: wantsMergeRequest
+          ? "atlas-bridge-open-issue-merge-request"
+          : "atlas-bridge-followup-issue-execution",
+        params: wantsMergeRequest
+          ? {
+            issueId: input.issue.id,
+            companyId: input.issue.companyId,
+            commentId: input.commentId,
+          }
+          : {
+            issueId: input.issue.id,
+            companyId: input.issue.companyId,
+            commentId: input.commentId,
+            request: input.commentBody,
+            ...(nextTurn ? { turnNumber: nextTurn, turnLabel: `TURN ${nextTurn}` } : {}),
+          },
         renderEnvironment: null,
       });
       void trigger
@@ -297,11 +320,12 @@ export function issueRoutes(
             actorId: input.actor.actorId,
             agentId: input.actor.agentId,
             runId: input.actor.runId,
-            action: "issue.followup_requested",
+            action: wantsMergeRequest ? "issue.mr_requested" : "issue.followup_requested",
             entityType: "issue",
             entityId: input.issue.id,
             details: {
               pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+              requestType: wantsMergeRequest ? "merge_request" : "followup",
               nextTurn,
               source: "issue_comment",
             },
