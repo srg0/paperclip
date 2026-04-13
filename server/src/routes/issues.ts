@@ -38,13 +38,32 @@ import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+import { pluginRegistryService } from "../services/plugin-registry.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
+const ATLAS_BRIDGE_PLUGIN_KEY = "homio.atlas-bridge";
+const ATLAS_EXECUTION_DOCUMENT_KEY = "atlas-execution";
 const updateIssueRouteSchema = updateIssueSchema.extend({
   interrupt: z.boolean().optional(),
 });
 
-export function issueRoutes(db: Db, storage: StorageService) {
+function extractAtlasTurnNumber(documentBody: string | null | undefined): number | null {
+  if (typeof documentBody !== "string" || documentBody.trim().length === 0) {
+    return null;
+  }
+  const match = documentBody.match(/(?:^|\n)Turn:\s*`?TURN\s+(\d+)`?/i);
+  return match ? Number(match[1]) : null;
+}
+
+export function issueRoutes(
+  db: Db,
+  storage: StorageService,
+  deps?: {
+    workerManager?: Pick<PluginWorkerManager, "call">;
+    pluginRegistry?: Pick<ReturnType<typeof pluginRegistryService>, "getByKey">;
+  },
+) {
   const router = Router();
   const svc = issueService(db);
   const access = accessService(db);
@@ -56,6 +75,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
+  const pluginRegistry = deps?.pluginRegistry ?? pluginRegistryService(db);
   const routinesSvc = routineService(db);
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -225,6 +245,71 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
 
     return { project, goal: null };
+  }
+
+  async function maybeTriggerAtlasFollowupFromComment(input: {
+    issue: {
+      id: string;
+      companyId: string;
+    };
+    commentBody: string;
+    actor: ReturnType<typeof getActorInfo>;
+  }) {
+    if (input.actor.actorType !== "user" || !deps?.workerManager) {
+      return false;
+    }
+
+    const executionDoc = await documentsSvc.getIssueDocumentByKey(input.issue.id, ATLAS_EXECUTION_DOCUMENT_KEY);
+    if (!executionDoc?.body) {
+      return false;
+    }
+
+    const plugin = await pluginRegistry.getByKey(ATLAS_BRIDGE_PLUGIN_KEY);
+    if (!plugin || plugin.status !== "ready") {
+      logger.warn(
+        { issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY, pluginStatus: plugin?.status ?? "missing" },
+        "atlas follow-up requested from issue comment, but bridge plugin is not ready",
+      );
+      return false;
+    }
+
+    const currentTurn = extractAtlasTurnNumber(executionDoc.body);
+    const nextTurn = currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null;
+
+    try {
+      await deps.workerManager.call(plugin.id, "performAction", {
+        key: "atlas-bridge-followup-issue-execution",
+        params: {
+          issueId: input.issue.id,
+          companyId: input.issue.companyId,
+          request: input.commentBody,
+          ...(nextTurn ? { turnNumber: nextTurn, turnLabel: `TURN ${nextTurn}` } : {}),
+        },
+        renderEnvironment: null,
+      });
+      await logActivity(db, {
+        companyId: input.issue.companyId,
+        actorType: input.actor.actorType,
+        actorId: input.actor.actorId,
+        agentId: input.actor.agentId,
+        runId: input.actor.runId,
+        action: "issue.followup_requested",
+        entityType: "issue",
+        entityId: input.issue.id,
+        details: {
+          pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+          nextTurn,
+          source: "issue_comment",
+        },
+      });
+      return true;
+    } catch (err) {
+      logger.warn(
+        { err, issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY },
+        "failed to trigger atlas follow-up from issue comment",
+      );
+      return false;
+    }
   }
 
   // Resolve issue identifiers (e.g. "PAP-39") to UUIDs for all /issues/:id routes
@@ -1149,6 +1234,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     });
 
     let comment = null;
+    let atlasFollowupTriggered = false;
     if (commentBody) {
       comment = await svc.addComment(id, commentBody, {
         agentId: actor.agentId ?? undefined,
@@ -1173,6 +1259,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
           ...(interruptedRunId ? { interruptedRunId } : {}),
           ...(hasFieldChanges ? { updated: true } : {}),
         },
+      });
+
+      atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
+        issue,
+        commentBody,
+        actor,
       });
 
     }
@@ -1565,6 +1657,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
       },
     });
 
+    const atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
+      issue: currentIssue,
+      commentBody: req.body.body,
+      actor,
+    });
+
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
@@ -1572,7 +1670,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       const actorIsAgent = actor.actorType === "agent";
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const skipWake = selfComment || isClosed;
-      if (assigneeId && (reopened || !skipWake)) {
+      if (assigneeId && !atlasFollowupTriggered && (reopened || !skipWake)) {
         if (reopened) {
           wakeups.set(assigneeId, {
             source: "automation",

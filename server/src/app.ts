@@ -127,6 +127,10 @@ export async function createApp(
   }
   app.use(llmRoutes(db));
 
+  const hostServicesDisposers = new Map<string, () => void>();
+  const workerManager = createPluginWorkerManager();
+  const pluginRegistry = pluginRegistryService(db);
+
   // Mount API routes
   const api = Router();
   api.use(boardMutationGuard());
@@ -144,7 +148,7 @@ export async function createApp(
   api.use(agentRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
-  api.use(issueRoutes(db, opts.storageService));
+  api.use(issueRoutes(db, opts.storageService, { workerManager, pluginRegistry }));
   api.use(routineRoutes(db));
   api.use(executionWorkspaceRoutes(db));
   api.use(goalRoutes(db));
@@ -155,9 +159,6 @@ export async function createApp(
   api.use(dashboardRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(instanceSettingsRoutes(db));
-  const hostServicesDisposers = new Map<string, () => void>();
-  const workerManager = createPluginWorkerManager();
-  const pluginRegistry = pluginRegistryService(db);
   const eventBus = createPluginEventBus();
   setPluginEventBus(eventBus);
   const jobStore = pluginJobStore(db);
