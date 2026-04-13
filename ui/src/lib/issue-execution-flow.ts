@@ -24,6 +24,7 @@ export interface IssueExecutionHeaderStage {
   label: string;
   ownerLabel: string;
   ownerKey: string;
+  ownerIcon: string | null;
   state: IssueExecutionStageState;
   countBadge: string | null;
   note: string | null;
@@ -127,7 +128,7 @@ function parseIntField(value: string | null): number {
 
 function parseTurnNumber(turnLabel: string | null): number | null {
   if (!turnLabel) return null;
-  const match = /turn-(\d+)/i.exec(turnLabel);
+  const match = /turn(?:[\s_-]+)?(\d+)/i.exec(turnLabel);
   if (!match) return null;
   const value = Number.parseInt(match[1], 10);
   return Number.isFinite(value) ? value : null;
@@ -377,6 +378,13 @@ export function buildIssueExecutionHeaderModel(input: {
   agents: Agent[];
 }): IssueExecutionHeaderModel {
   const agentMap = new Map(input.agents.map((agent) => [agent.id, agent] as const));
+  const stageAgentMap = new Map<IssueExecutionStageKey, Agent>();
+  for (const agent of input.agents) {
+    const stage = normalizeStageKey(agent.urlKey ?? agent.name ?? agent.role ?? null);
+    if (stage && !stageAgentMap.has(stage)) {
+      stageAgentMap.set(stage, agent);
+    }
+  }
   const parsed = parseExecutionDocument(input.executionDocument);
   const currentStage = inferCurrentStage({
     issue: input.issue,
@@ -422,6 +430,7 @@ export function buildIssueExecutionHeaderModel(input: {
       label: stage.label,
       ownerLabel: stage.ownerLabel,
       ownerKey: stage.ownerKey,
+      ownerIcon: stageAgentMap.get(stage.key)?.icon ?? null,
       state,
       countBadge: retryCount > 0 && stage.key === currentStage ? `R${retryCount}` : occurrences > 1 ? `L${occurrences - 1}` : null,
       note: stage.key === currentStage ? parsed.nextStep : null,

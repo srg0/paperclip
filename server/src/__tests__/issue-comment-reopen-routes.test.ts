@@ -210,7 +210,7 @@ describe("issue comment reopen routes", () => {
     mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
     mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
       key: "atlas-execution",
-      body: ["# Atlas Execution", "", "Turn: `TURN 4`"].join("\n"),
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
     });
     mockPluginRegistry.getByKey.mockResolvedValue({
       id: "plugin-1",
@@ -228,6 +228,7 @@ describe("issue comment reopen routes", () => {
       params: {
         issueId: "11111111-1111-4111-8111-111111111111",
         companyId: "company-1",
+        commentId: "comment-1",
         request: "Сохрани желтую кнопку. Добавь черную обводку и скругление.",
         turnNumber: 5,
         turnLabel: "TURN 5",
@@ -246,7 +247,7 @@ describe("issue comment reopen routes", () => {
     mockIssueService.update.mockResolvedValue(issue);
     mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
       key: "atlas-execution",
-      body: ["# Atlas Execution", "", "Turn: `TURN 2`"].join("\n"),
+      body: ["# Atlas Execution", "", "- Turn: `TURN 2`"].join("\n"),
     });
     mockPluginRegistry.getByKey.mockResolvedValue({
       id: "plugin-1",
@@ -264,6 +265,7 @@ describe("issue comment reopen routes", () => {
       params: {
         issueId: "11111111-1111-4111-8111-111111111111",
         companyId: "company-1",
+        commentId: "comment-1",
         request: "Оставь желтый цвет. Добавь черную обводку.",
         turnNumber: 3,
         turnLabel: "TURN 3",

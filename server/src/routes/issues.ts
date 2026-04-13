@@ -52,7 +52,7 @@ function extractAtlasTurnNumber(documentBody: string | null | undefined): number
   if (typeof documentBody !== "string" || documentBody.trim().length === 0) {
     return null;
   }
-  const match = documentBody.match(/(?:^|\n)Turn:\s*`?TURN\s+(\d+)`?/i);
+  const match = documentBody.match(/(?:^|\n)\s*-?\s*Turn:\s*`?TURN\s+(\d+)`?/i);
   return match ? Number(match[1]) : null;
 }
 
@@ -252,6 +252,7 @@ export function issueRoutes(
       id: string;
       companyId: string;
     };
+    commentId: string;
     commentBody: string;
     actor: ReturnType<typeof getActorInfo>;
   }) {
@@ -277,31 +278,41 @@ export function issueRoutes(
     const nextTurn = currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null;
 
     try {
-      await deps.workerManager.call(plugin.id, "performAction", {
+      const trigger = deps.workerManager.call(plugin.id, "performAction", {
         key: "atlas-bridge-followup-issue-execution",
         params: {
           issueId: input.issue.id,
           companyId: input.issue.companyId,
+          commentId: input.commentId,
           request: input.commentBody,
           ...(nextTurn ? { turnNumber: nextTurn, turnLabel: `TURN ${nextTurn}` } : {}),
         },
         renderEnvironment: null,
       });
-      await logActivity(db, {
-        companyId: input.issue.companyId,
-        actorType: input.actor.actorType,
-        actorId: input.actor.actorId,
-        agentId: input.actor.agentId,
-        runId: input.actor.runId,
-        action: "issue.followup_requested",
-        entityType: "issue",
-        entityId: input.issue.id,
-        details: {
-          pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
-          nextTurn,
-          source: "issue_comment",
-        },
-      });
+      void trigger
+        .then(async () => {
+          await logActivity(db, {
+            companyId: input.issue.companyId,
+            actorType: input.actor.actorType,
+            actorId: input.actor.actorId,
+            agentId: input.actor.agentId,
+            runId: input.actor.runId,
+            action: "issue.followup_requested",
+            entityType: "issue",
+            entityId: input.issue.id,
+            details: {
+              pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+              nextTurn,
+              source: "issue_comment",
+            },
+          });
+        })
+        .catch((err) => {
+          logger.warn(
+            { err, issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY },
+            "failed to trigger atlas follow-up from issue comment",
+          );
+        });
       return true;
     } catch (err) {
       logger.warn(
@@ -1263,6 +1274,7 @@ export function issueRoutes(
 
       atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
         issue,
+        commentId: comment.id,
         commentBody,
         actor,
       });
@@ -1659,6 +1671,7 @@ export function issueRoutes(
 
     const atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
       issue: currentIssue,
+      commentId: comment.id,
       commentBody: req.body.body,
       actor,
     });
