@@ -87,6 +87,14 @@ const CRASH_WINDOW_MS = 10 * 60 * 1_000;
 /** Maximum number of stderr characters retained for worker failure context. */
 const MAX_STDERR_EXCERPT_CHARS = 8_000;
 
+/** Host env keys that are safe and required inside plugin workers. */
+const WORKER_ENV_PASSTHROUGH_KEYS = [
+  "GITLAB_BASE_URL",
+  "GITLAB_TOKEN",
+  "GITLAB_PROJECT_PATH",
+  "MR_TARGET_BRANCH",
+] as const;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -147,6 +155,30 @@ export function formatWorkerFailureMessage(message: string, stderrExcerpt: strin
   if (!excerpt) return message;
   if (message.includes(excerpt)) return message;
   return `${message}\n\nWorker stderr:\n${excerpt}`;
+}
+
+export function buildWorkerEnvironment(
+  pluginId: string,
+  optionsEnv: Record<string, string> | undefined,
+  hostEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const workerEnv: Record<string, string> = {
+    ...optionsEnv,
+    PATH: hostEnv.PATH ?? "",
+    NODE_PATH: hostEnv.NODE_PATH ?? "",
+    PAPERCLIP_PLUGIN_ID: pluginId,
+    NODE_ENV: hostEnv.NODE_ENV ?? "production",
+    TZ: hostEnv.TZ ?? "UTC",
+  };
+
+  for (const key of WORKER_ENV_PASSTHROUGH_KEYS) {
+    const value = hostEnv[key];
+    if (typeof value === "string" && value.length > 0) {
+      workerEnv[key] = value;
+    }
+  }
+
+  return workerEnv;
 }
 
 /**
@@ -607,14 +639,7 @@ export function createPluginWorkerHandle(
     // Security: Do NOT spread process.env into the worker. Plugins should only
     // receive a minimal, controlled environment to prevent leaking host
     // secrets (like DATABASE_URL, internal API keys, etc.).
-    const workerEnv: Record<string, string> = {
-      ...options.env,
-      PATH: process.env.PATH ?? "",
-      NODE_PATH: process.env.NODE_PATH ?? "",
-      PAPERCLIP_PLUGIN_ID: pluginId,
-      NODE_ENV: process.env.NODE_ENV ?? "production",
-      TZ: process.env.TZ ?? "UTC",
-    };
+    const workerEnv = buildWorkerEnvironment(pluginId, options.env);
 
     const child = fork(options.entrypointPath, [], {
       stdio: ["pipe", "pipe", "pipe", "ipc"],
