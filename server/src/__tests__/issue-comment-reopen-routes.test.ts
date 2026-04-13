@@ -1,4 +1,5 @@
 import express from "express";
+import { Readable } from "node:stream";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { issueRoutes } from "../routes/issues.js";
@@ -9,6 +10,7 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
+  listAttachments: vi.fn(),
 }));
 
 const mockDocumentService = vi.hoisted(() => ({
@@ -41,6 +43,9 @@ const mockWorkerManager = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+const mockStorage = vi.hoisted(() => ({
+  getObject: vi.fn(),
+}));
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -72,7 +77,7 @@ function createApp() {
     };
     next();
   });
-  app.use("/api", issueRoutes({} as any, {} as any, {
+  app.use("/api", issueRoutes({} as any, mockStorage as any, {
     workerManager: mockWorkerManager as any,
     pluginRegistry: mockPluginRegistry as any,
   }));
@@ -109,6 +114,11 @@ describe("issue comment reopen routes", () => {
       authorUserId: "local-board",
     });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
+    mockIssueService.listAttachments.mockResolvedValue([]);
+    mockStorage.getObject.mockResolvedValue({
+      contentType: "image/png",
+      stream: Readable.from([Buffer.from("image-bytes")]),
+    });
   });
 
   it("treats reopen=true as a no-op when the issue is already open", async () => {
@@ -230,6 +240,7 @@ describe("issue comment reopen routes", () => {
         companyId: "company-1",
         commentId: "comment-1",
         request: "Сохрани желтую кнопку. Добавь черную обводку и скругление.",
+        commentImages: [],
         turnNumber: 5,
         turnLabel: "TURN 5",
       },
@@ -302,9 +313,64 @@ describe("issue comment reopen routes", () => {
         companyId: "company-1",
         commentId: "comment-1",
         request: "Оставь желтый цвет. Добавь черную обводку.",
+        commentImages: [],
         turnNumber: 3,
         turnLabel: "TURN 3",
       },
+      renderEnvironment: null,
+    });
+  });
+
+  it("propagates comment images into Atlas follow-up context", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+    mockIssueService.listAttachments.mockResolvedValue([
+      {
+        id: "attachment-1",
+        issueId: "11111111-1111-4111-8111-111111111111",
+        issueCommentId: "comment-1",
+        companyId: "company-1",
+        objectKey: "attachments/comment-1.png",
+        originalFilename: "regression.png",
+        contentType: "image/png",
+        byteSize: 128,
+        sha256: "sha256-test",
+      },
+    ]);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Исправь разметку.\n\n![](/api/attachments/attachment-1/content)\nкриво размечается." });
+
+    expect(res.status).toBe(201);
+    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
+      key: "atlas-bridge-followup-issue-execution",
+      params: expect.objectContaining({
+        issueId: "11111111-1111-4111-8111-111111111111",
+        companyId: "company-1",
+        commentId: "comment-1",
+        turnNumber: 5,
+        turnLabel: "TURN 5",
+        request: expect.stringContaining("Reference images from this comment:"),
+        commentImages: [
+          expect.objectContaining({
+            attachmentId: "attachment-1",
+            originalFilename: "regression.png",
+            contentType: "image/png",
+            sourceUrl: "/api/attachments/attachment-1/content",
+            absoluteUrl: expect.stringContaining("/api/attachments/attachment-1/content"),
+            inlineDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+          }),
+        ],
+      }),
       renderEnvironment: null,
     });
   });

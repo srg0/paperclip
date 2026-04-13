@@ -103,6 +103,144 @@ export function issueRoutes(
     };
   }
 
+  const MAX_ATLAS_COMMENT_IMAGE_INLINE_BYTES = Math.max(
+    32 * 1024,
+    Number(process.env.ATLAS_FOLLOWUP_INLINE_IMAGE_MAX_BYTES || 512 * 1024) || 512 * 1024,
+  );
+  const MAX_ATLAS_COMMENT_IMAGES = Math.max(
+    1,
+    Number(process.env.ATLAS_FOLLOWUP_MAX_IMAGES || 4) || 4,
+  );
+
+  function buildAbsoluteUrl(req: Request, pathname: string) {
+    const proto = String(req.get("x-forwarded-proto") || req.protocol || "https").trim() || "https";
+    const host = String(req.get("x-forwarded-host") || req.get("host") || "").trim();
+    if (!host) return pathname;
+    return `${proto}://${host}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+  }
+
+  async function streamToBuffer(stream: NodeJS.ReadableStream) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+
+  function extractMarkdownImageRefs(body: string) {
+    const refs: Array<{ altText: string | null; rawUrl: string; attachmentId: string | null }> = [];
+    const pattern = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    for (const match of body.matchAll(pattern)) {
+      const rawUrl = String(match[2] || "").trim();
+      if (!rawUrl) continue;
+      const attachmentMatch = rawUrl.match(/\/api\/attachments\/([^/]+)\/content/i);
+      refs.push({
+        altText: String(match[1] || "").trim() || null,
+        rawUrl,
+        attachmentId: attachmentMatch?.[1] ? String(attachmentMatch[1]).trim() : null,
+      });
+    }
+    return refs;
+  }
+
+  async function resolveAtlasFollowupCommentContext(input: {
+    req: Request;
+    issueId: string;
+    companyId: string;
+    commentId: string;
+    commentBody: string;
+  }) {
+    const markdownImageRefs = extractMarkdownImageRefs(input.commentBody);
+    if (markdownImageRefs.length === 0) {
+      return {
+        enrichedBody: input.commentBody,
+        commentImages: [] as Array<Record<string, unknown>>,
+      };
+    }
+
+    const allAttachments = await svc.listAttachments(input.issueId);
+    const attachmentById = new Map(
+      allAttachments.map((attachment) => [attachment.id, withContentPath(attachment)]),
+    );
+    const commentAttachments = allAttachments
+      .filter((attachment) => attachment.issueCommentId === input.commentId)
+      .map((attachment) => withContentPath(attachment));
+    type IssueAttachmentWithContentPath = (typeof commentAttachments)[number];
+    const requestedAttachmentIds = new Set(
+      markdownImageRefs
+        .map((item) => item.attachmentId)
+        .filter((item): item is string => Boolean(item)),
+    );
+    const requestedAttachments: IssueAttachmentWithContentPath[] = Array.from(requestedAttachmentIds)
+      .map((attachmentId) => attachmentById.get(attachmentId))
+      .filter((attachment): attachment is IssueAttachmentWithContentPath => attachment != null);
+    const candidateAttachments = [
+      ...commentAttachments,
+      ...requestedAttachments,
+    ];
+
+    const images: Array<Record<string, unknown>> = [];
+    const seenAttachmentIds = new Set<string>();
+    for (const attachment of candidateAttachments) {
+      if (images.length >= MAX_ATLAS_COMMENT_IMAGES) break;
+      if (seenAttachmentIds.has(attachment.id)) continue;
+      seenAttachmentIds.add(attachment.id);
+      if (!String(attachment.contentType || "").toLowerCase().startsWith("image/")) continue;
+
+      const matchingRef = markdownImageRefs.find((item) => item.attachmentId === attachment.id) ?? null;
+      const absoluteUrl = buildAbsoluteUrl(input.req, attachment.contentPath);
+      let inlineDataUrl: string | null = null;
+
+      if ((attachment.byteSize ?? 0) > 0 && (attachment.byteSize ?? 0) <= MAX_ATLAS_COMMENT_IMAGE_INLINE_BYTES) {
+        try {
+          const object = await storage.getObject(input.companyId, attachment.objectKey);
+          const body = await streamToBuffer(object.stream);
+          inlineDataUrl = `data:${attachment.contentType || object.contentType || "application/octet-stream"};base64,${body.toString("base64")}`;
+        } catch {
+          inlineDataUrl = null;
+        }
+      }
+
+      images.push({
+        attachmentId: attachment.id,
+        originalFilename: attachment.originalFilename ?? null,
+        contentType: attachment.contentType ?? null,
+        byteSize: attachment.byteSize ?? null,
+        sha256: attachment.sha256 ?? null,
+        contentPath: attachment.contentPath,
+        absoluteUrl,
+        sourceUrl: matchingRef?.rawUrl ?? attachment.contentPath,
+        altText: matchingRef?.altText ?? null,
+        inlineDataUrl,
+      });
+    }
+
+    if (images.length === 0) {
+      return {
+        enrichedBody: input.commentBody,
+        commentImages: images,
+      };
+    }
+
+    const imageLines = images.map((image, index) => {
+      const name = String(image.originalFilename || `comment-image-${index + 1}`).trim();
+      const contentType = String(image.contentType || "image").trim();
+      const absoluteUrl = String(image.absoluteUrl || "").trim();
+      const altText = String(image.altText || "").trim();
+      return `- ${name} (${contentType})${altText ? ` — ${altText}` : ""}: ${absoluteUrl}`;
+    });
+
+    return {
+      enrichedBody: [
+        input.commentBody,
+        "",
+        "Reference images from this comment:",
+        ...imageLines,
+      ].join("\n"),
+      commentImages: images,
+    };
+  }
+
   async function runSingleFileUpload(req: Request, res: Response) {
     await new Promise<void>((resolve, reject) => {
       upload.single("file")(req, res, (err: unknown) => {
@@ -262,6 +400,7 @@ export function issueRoutes(
   }
 
   async function maybeTriggerAtlasFollowupFromComment(input: {
+    req: Request;
     issue: {
       id: string;
       companyId: string;
@@ -291,6 +430,15 @@ export function issueRoutes(
     const wantsMergeRequest = isAtlasMergeRequestIntent(input.commentBody);
     const currentTurn = extractAtlasTurnNumber(executionDoc.body);
     const nextTurn = currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null;
+    const commentContext = wantsMergeRequest
+      ? { enrichedBody: input.commentBody, commentImages: [] as Array<Record<string, unknown>> }
+      : await resolveAtlasFollowupCommentContext({
+        req: input.req,
+        issueId: input.issue.id,
+        companyId: input.issue.companyId,
+        commentId: input.commentId,
+        commentBody: input.commentBody,
+      });
 
     try {
       const trigger = deps.workerManager.call(plugin.id, "performAction", {
@@ -307,7 +455,8 @@ export function issueRoutes(
             issueId: input.issue.id,
             companyId: input.issue.companyId,
             commentId: input.commentId,
-            request: input.commentBody,
+            request: commentContext.enrichedBody,
+            commentImages: commentContext.commentImages,
             ...(nextTurn ? { turnNumber: nextTurn, turnLabel: `TURN ${nextTurn}` } : {}),
           },
         renderEnvironment: null,
@@ -1297,6 +1446,7 @@ export function issueRoutes(
       });
 
       atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
+        req,
         issue,
         commentId: comment.id,
         commentBody,
@@ -1694,6 +1844,7 @@ export function issueRoutes(
     });
 
     const atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
+      req,
       issue: currentIssue,
       commentId: comment.id,
       commentBody: req.body.body,
