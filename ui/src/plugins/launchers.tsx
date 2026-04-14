@@ -24,6 +24,7 @@ import type {
   PluginUiSlotEntityType,
 } from "@paperclipai/shared";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
+import { ApiError } from "@/api/client";
 import { authApi } from "@/api/auth";
 import { Button } from "@/components/ui/button";
 import { useNavigate, useLocation } from "@/lib/router";
@@ -130,6 +131,28 @@ const PluginLauncherRuntimeContext = createContext<PluginLauncherRuntimeContextV
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   return "Unknown error";
+}
+
+const transientPluginUiStatuses = new Set([502, 503, 504]);
+const transientPluginUiMessage = "temporarily reconnecting";
+
+function isTransientPluginUiError(error: unknown): boolean {
+  return error instanceof ApiError && transientPluginUiStatuses.has(error.status);
+}
+
+function getPluginUiRetryDelay(attemptIndex: number): number {
+  return Math.min(750 * 2 ** Math.max(0, attemptIndex - 1), 4_000);
+}
+
+function getPluginUiErrorMessage(
+  error: unknown,
+  data: PluginUiContribution[] | undefined,
+): string | null {
+  if (!error) return null;
+  if (isTransientPluginUiError(error)) {
+    return Array.isArray(data) && data.length > 0 ? null : transientPluginUiMessage;
+  }
+  return getErrorMessage(error);
 }
 
 function buildLauncherHostContext(
@@ -268,6 +291,9 @@ export function usePluginLaunchers(
     queryKey: queryKeys.plugins.uiContributions,
     queryFn: () => pluginsApi.listUiContributions(),
     enabled: queryEnabled,
+    retry: (failureCount, retryError) =>
+      isTransientPluginUiError(retryError) && failureCount < 3,
+    retryDelay: getPluginUiRetryDelay,
   });
 
   const placementZonesKey = useMemo(
@@ -322,7 +348,7 @@ export function usePluginLaunchers(
     launchers,
     contributionsByPluginId,
     isLoading: queryEnabled && isLoading,
-    errorMessage: error ? getErrorMessage(error) : null,
+    errorMessage: getPluginUiErrorMessage(error, data),
   };
 }
 
@@ -772,9 +798,20 @@ export function PluginLauncherOutlet({
   });
 
   if (errorMessage) {
+    const isTransientReconnect = errorMessage === transientPluginUiMessage;
     return (
-      <div className={cn("rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1 text-xs text-destructive", errorClassName)}>
-        Plugin launchers unavailable: {errorMessage}
+      <div
+        className={cn(
+          "rounded-md px-2 py-1 text-xs",
+          isTransientReconnect
+            ? "border border-border/60 bg-muted/40 text-muted-foreground"
+            : "border border-destructive/30 bg-destructive/5 text-destructive",
+          errorClassName,
+        )}
+      >
+        {isTransientReconnect
+          ? "Plugin launchers are reconnecting."
+          : `Plugin launchers unavailable: ${errorMessage}`}
       </div>
     );
   }
