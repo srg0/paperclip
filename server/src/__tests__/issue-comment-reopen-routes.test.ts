@@ -41,6 +41,8 @@ const mockPluginRegistry = vi.hoisted(() => ({
 
 const mockWorkerManager = vi.hoisted(() => ({
   call: vi.fn(async () => ({ ok: true })),
+  getWorker: vi.fn(() => ({ id: "plugin-1-worker" })),
+  isRunning: vi.fn(() => true),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
@@ -235,19 +237,25 @@ describe("issue comment reopen routes", () => {
       .send({ body: "Сохрани желтую кнопку. Добавь черную обводку и скругление." });
 
     expect(res.status).toBe(201);
-    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
-      key: "atlas-bridge-followup-issue-execution",
-      params: {
-        issueId: "11111111-1111-4111-8111-111111111111",
-        companyId: "company-1",
-        commentId: "comment-1",
-        request: "Сохрани желтую кнопку. Добавь черную обводку и скругление.",
-        commentImages: [],
-        turnNumber: 5,
-        turnLabel: "TURN 5",
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      {
+        key: "atlas-bridge-followup-issue-execution",
+        params: {
+          issueId: "11111111-1111-4111-8111-111111111111",
+          companyId: "company-1",
+          commentId: "comment-1",
+          request: "Сохрани желтую кнопку. Добавь черную обводку и скругление.",
+          commentImages: [],
+          deferInitialSync: true,
+          turnNumber: 5,
+          turnLabel: "TURN 5",
+        },
+        renderEnvironment: null,
       },
-      renderEnvironment: null,
-    });
+      15_000,
+    );
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
       "22222222-2222-4222-8222-222222222222",
       expect.objectContaining({ reason: "issue_commented" }),
@@ -271,15 +279,20 @@ describe("issue comment reopen routes", () => {
       .send({ body: "Проверил руками, всё ок. Открой MR." });
 
     expect(res.status).toBe(201);
-    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
-      key: "atlas-bridge-open-issue-merge-request",
-      params: {
-        issueId: "11111111-1111-4111-8111-111111111111",
-        companyId: "company-1",
-        commentId: "comment-1",
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      {
+        key: "atlas-bridge-open-issue-merge-request",
+        params: {
+          issueId: "11111111-1111-4111-8111-111111111111",
+          companyId: "company-1",
+          commentId: "comment-1",
+        },
+        renderEnvironment: null,
       },
-      renderEnvironment: null,
-    });
+      15_000,
+    );
     expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
       "plugin-1",
       "performAction",
@@ -308,19 +321,25 @@ describe("issue comment reopen routes", () => {
       .send({ comment: "Оставь желтый цвет. Добавь черную обводку." });
 
     expect(res.status).toBe(200);
-    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
-      key: "atlas-bridge-followup-issue-execution",
-      params: {
-        issueId: "11111111-1111-4111-8111-111111111111",
-        companyId: "company-1",
-        commentId: "comment-1",
-        request: "Оставь желтый цвет. Добавь черную обводку.",
-        commentImages: [],
-        turnNumber: 3,
-        turnLabel: "TURN 3",
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      {
+        key: "atlas-bridge-followup-issue-execution",
+        params: {
+          issueId: "11111111-1111-4111-8111-111111111111",
+          companyId: "company-1",
+          commentId: "comment-1",
+          request: "Оставь желтый цвет. Добавь черную обводку.",
+          commentImages: [],
+          deferInitialSync: true,
+          turnNumber: 3,
+          turnLabel: "TURN 3",
+        },
+        renderEnvironment: null,
       },
-      renderEnvironment: null,
-    });
+      15_000,
+    );
   });
 
   it("propagates comment images into Atlas follow-up context", async () => {
@@ -353,28 +372,34 @@ describe("issue comment reopen routes", () => {
       .send({ body: "Исправь разметку.\n\n![](/api/attachments/attachment-1/content)\nкриво размечается." });
 
     expect(res.status).toBe(201);
-    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
-      key: "atlas-bridge-followup-issue-execution",
-      params: expect.objectContaining({
-        issueId: "11111111-1111-4111-8111-111111111111",
-        companyId: "company-1",
-        commentId: "comment-1",
-        turnNumber: 5,
-        turnLabel: "TURN 5",
-        request: expect.stringContaining("Reference images from this comment:"),
-        commentImages: [
-          expect.objectContaining({
-            attachmentId: "attachment-1",
-            originalFilename: "regression.png",
-            contentType: "image/png",
-            sourceUrl: "/api/attachments/attachment-1/content",
-            absoluteUrl: expect.stringContaining("/api/attachments/attachment-1/content"),
-            inlineDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
-          }),
-        ],
-      }),
-      renderEnvironment: null,
-    });
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      {
+        key: "atlas-bridge-followup-issue-execution",
+        params: expect.objectContaining({
+          issueId: "11111111-1111-4111-8111-111111111111",
+          companyId: "company-1",
+          commentId: "comment-1",
+          deferInitialSync: true,
+          turnNumber: 5,
+          turnLabel: "TURN 5",
+          request: expect.stringContaining("Reference images from this comment:"),
+          commentImages: [
+            expect.objectContaining({
+              attachmentId: "attachment-1",
+              originalFilename: "regression.png",
+              contentType: "image/png",
+              sourceUrl: "/api/attachments/attachment-1/content",
+              absoluteUrl: expect.stringContaining("/api/attachments/attachment-1/content"),
+              inlineDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+            }),
+          ],
+        }),
+        renderEnvironment: null,
+      },
+      15_000,
+    );
   });
 
   it("preserves an explicit follow-up turn number from the new comment body", async () => {
@@ -394,14 +419,20 @@ describe("issue comment reopen routes", () => {
       .send({ body: "## Follow-up turn 13\n\nПерепроверь сложный сценарий." });
 
     expect(res.status).toBe(201);
-    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
-      key: "atlas-bridge-followup-issue-execution",
-      params: expect.objectContaining({
-        turnNumber: 13,
-        turnLabel: "TURN 13",
-      }),
-      renderEnvironment: null,
-    });
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      {
+        key: "atlas-bridge-followup-issue-execution",
+        params: expect.objectContaining({
+          deferInitialSync: true,
+          turnNumber: 13,
+          turnLabel: "TURN 13",
+        }),
+        renderEnvironment: null,
+      },
+      15_000,
+    );
   });
 
   it("falls back to the latest follow-up turn from comment history when the execution document lags", async () => {
@@ -425,13 +456,19 @@ describe("issue comment reopen routes", () => {
       .send({ body: "Новая доработка без явного turn в body." });
 
     expect(res.status).toBe(201);
-    expect(mockWorkerManager.call).toHaveBeenCalledWith("plugin-1", "performAction", {
-      key: "atlas-bridge-followup-issue-execution",
-      params: expect.objectContaining({
-        turnNumber: 13,
-        turnLabel: "TURN 13",
-      }),
-      renderEnvironment: null,
-    });
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      {
+        key: "atlas-bridge-followup-issue-execution",
+        params: expect.objectContaining({
+          deferInitialSync: true,
+          turnNumber: 13,
+          turnLabel: "TURN 13",
+        }),
+        renderEnvironment: null,
+      },
+      15_000,
+    );
   });
 });

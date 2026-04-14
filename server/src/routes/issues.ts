@@ -82,7 +82,7 @@ export function issueRoutes(
   db: Db,
   storage: StorageService,
   deps?: {
-    workerManager?: Pick<PluginWorkerManager, "call">;
+    workerManager?: Pick<PluginWorkerManager, "call" | "getWorker" | "isRunning">;
     pluginRegistry?: Pick<ReturnType<typeof pluginRegistryService>, "getByKey">;
   },
 ) {
@@ -434,6 +434,18 @@ export function issueRoutes(
       );
       return false;
     }
+    if (!deps.workerManager.getWorker(plugin.id) || !deps.workerManager.isRunning(plugin.id)) {
+      logger.warn(
+        {
+          issueId: input.issue.id,
+          pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+          pluginId: plugin.id,
+          pluginStatus: plugin.status,
+        },
+        "atlas follow-up requested from issue comment, but bridge worker is not running",
+      );
+      return false;
+    }
 
     const wantsMergeRequest = isAtlasMergeRequestIntent(input.commentBody);
     const explicitTurn = extractFollowupTurnNumber(input.commentBody);
@@ -464,7 +476,7 @@ export function issueRoutes(
       });
 
     try {
-      const trigger = deps.workerManager.call(plugin.id, "performAction", {
+      await deps.workerManager.call(plugin.id, "performAction", {
         key: wantsMergeRequest
           ? "atlas-bridge-open-issue-merge-request"
           : "atlas-bridge-followup-issue-execution",
@@ -480,35 +492,27 @@ export function issueRoutes(
             commentId: input.commentId,
             request: commentContext.enrichedBody,
             commentImages: commentContext.commentImages,
+            deferInitialSync: true,
             ...(nextTurn ? { turnNumber: nextTurn, turnLabel: `TURN ${nextTurn}` } : {}),
           },
         renderEnvironment: null,
+      }, 15_000);
+      await logActivity(db, {
+        companyId: input.issue.companyId,
+        actorType: input.actor.actorType,
+        actorId: input.actor.actorId,
+        agentId: input.actor.agentId,
+        runId: input.actor.runId,
+        action: wantsMergeRequest ? "issue.mr_requested" : "issue.followup_requested",
+        entityType: "issue",
+        entityId: input.issue.id,
+        details: {
+          pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+          requestType: wantsMergeRequest ? "merge_request" : "followup",
+          nextTurn,
+          source: "issue_comment",
+        },
       });
-      void trigger
-        .then(async () => {
-          await logActivity(db, {
-            companyId: input.issue.companyId,
-            actorType: input.actor.actorType,
-            actorId: input.actor.actorId,
-            agentId: input.actor.agentId,
-            runId: input.actor.runId,
-            action: wantsMergeRequest ? "issue.mr_requested" : "issue.followup_requested",
-            entityType: "issue",
-            entityId: input.issue.id,
-            details: {
-              pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
-              requestType: wantsMergeRequest ? "merge_request" : "followup",
-              nextTurn,
-              source: "issue_comment",
-            },
-          });
-        })
-        .catch((err) => {
-          logger.warn(
-            { err, issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY },
-            "failed to trigger atlas follow-up from issue comment",
-          );
-        });
       return true;
     } catch (err) {
       logger.warn(

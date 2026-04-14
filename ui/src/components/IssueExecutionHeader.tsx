@@ -106,7 +106,7 @@ function connectorTone(state: IssueExecutionStageState) {
 function StageConnector({ state, active }: { state: IssueExecutionStageState; active: boolean }) {
   const animated = active || state === "looping" || state === "retrying" || state === "passed";
   return (
-    <div className="flex min-w-[56px] flex-1 items-center gap-2 px-1 pt-10 sm:min-w-[72px]">
+    <div className="flex w-14 shrink-0 items-center gap-2 px-1 pt-10 sm:w-16">
       <div className="relative h-[2px] flex-1 overflow-hidden rounded-full bg-border/70">
         <div className={cn("absolute inset-0 bg-gradient-to-r", connectorTone(state), animated && "animate-pulse")} />
         {animated ? (
@@ -135,8 +135,8 @@ function StageDot({ stage, isLast }: { stage: IssueExecutionHeaderStage; isLast:
   const active = stage.state === "running" || stage.state === "retrying" || stage.state === "looping";
   const animated = active || stage.state === "passed";
   return (
-    <div className="flex min-w-[208px] flex-1 snap-start items-start sm:min-w-[224px] xl:min-w-0">
-      <div className="relative min-w-0 flex-1">
+    <div className="flex w-[240px] min-w-[240px] shrink-0 snap-start items-start sm:w-[272px] sm:min-w-[272px]">
+      <div className="relative w-full">
         <div className={stageShellClasses(stage.state, active)}>
           {animated ? (
             <span
@@ -147,7 +147,7 @@ function StageDot({ stage, isLast }: { stage: IssueExecutionHeaderStage; isLast:
               )}
             />
           ) : null}
-          <div className="flex items-start gap-3">
+          <div className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-3">
             <div className="relative flex flex-col items-center pt-0.5">
               <div
                 className={cn(
@@ -182,17 +182,22 @@ function StageDot({ stage, isLast }: { stage: IssueExecutionHeaderStage; isLast:
               ) : null}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-col items-start gap-1 sm:flex-row sm:flex-wrap sm:items-center">
-                <div className="max-w-full text-sm font-semibold leading-5 text-foreground break-words">
+              <div className="grid min-w-0 gap-1">
+                <div className="text-sm font-semibold leading-5 text-foreground">
                   {stage.label}
                 </div>
-                <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]", stateLabelClasses(stage.state))}>
+                <span
+                  className={cn(
+                    "inline-flex max-w-fit whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                    stateLabelClasses(stage.state),
+                  )}
+                >
                   {stage.state.replace("_", " ")}
                 </span>
               </div>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                 {stage.ownerIcon ? <AgentIcon icon={stage.ownerIcon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                <span className="min-w-0 break-words">{stage.ownerLabel}</span>
+                <span className="min-w-0 leading-5">{stage.ownerLabel}</span>
               </div>
               {stage.note ? <div className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">{stage.note}</div> : null}
             </div>
@@ -271,13 +276,13 @@ export function IssueExecutionHeader({
       <div className="overflow-x-auto border-b border-border/70 bg-gradient-to-r from-transparent via-muted/[0.06] to-transparent px-4 py-4 sm:px-5">
         <div
           data-testid="issue-execution-stage-rail"
-          className="flex min-w-max snap-x snap-mandatory items-start gap-0 pb-1 xl:min-w-0 xl:snap-none"
+          className="flex min-w-max snap-x snap-mandatory items-start gap-3 pb-1 xl:snap-none"
         >
           {model.stages.map((stage, index) => (
             <div
               key={stage.key}
               data-testid={`issue-execution-stage-${stage.key}`}
-              className="flex shrink-0 basis-auto xl:min-w-0 xl:flex-1 xl:shrink xl:basis-0"
+              className="flex shrink-0 items-start"
             >
               <StageDot stage={stage} isLast={index === model.stages.length - 1} />
             </div>
