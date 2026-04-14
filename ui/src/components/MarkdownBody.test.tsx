@@ -46,4 +46,19 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-kind="project"');
     expect(html).toContain("--paperclip-mention-project-color:#336699");
   });
+
+  it("strips service html comments from rendered markdown", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"<!-- paperclip-display-author: Atlas Bridge · Delivery Orchestrator -->\n\n### Delivery Orchestrator\n\nNormal body"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).not.toContain("paperclip-display-author");
+    expect(html).not.toContain("&lt;!--");
+    expect(html).toContain("Delivery Orchestrator");
+    expect(html).toContain("Normal body");
+  });
 });

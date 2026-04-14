@@ -12,6 +12,13 @@ interface MarkdownBodyProps {
   resolveImageSrc?: (src: string) => string | null;
 }
 
+function stripHtmlComments(source: string): string {
+  return source
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^\s*\n/gm, "")
+    .trim();
+}
+
 let mermaidLoaderPromise: Promise<typeof import("mermaid").default> | null = null;
 
 function loadMermaid() {
@@ -93,6 +100,7 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
 
 export function MarkdownBody({ children, className, resolveImageSrc }: MarkdownBodyProps) {
   const { theme } = useTheme();
+  const normalizedChildren = stripHtmlComments(children);
   const components: Components = {
     pre: ({ node: _node, children: preChildren, ...preProps }) => {
       const mermaidSource = extractMermaidSource(preChildren);
@@ -145,7 +153,7 @@ export function MarkdownBody({ children, className, resolveImageSrc }: MarkdownB
       )}
     >
       <Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url) => url}>
-        {children}
+        {normalizedChildren}
       </Markdown>
     </div>
   );
