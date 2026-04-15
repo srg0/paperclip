@@ -49,6 +49,7 @@ interface CommentThreadProps {
   onAttachImage?: (file: File) => Promise<void>;
   draftKey?: string;
   liveRunSlot?: React.ReactNode;
+  composerStatusSlot?: React.ReactNode;
   enableReassign?: boolean;
   reassignOptions?: InlineEntityOption[];
   currentAssigneeValue?: string;
@@ -319,6 +320,7 @@ export function CommentThread({
   onAttachImage,
   draftKey,
   liveRunSlot,
+  composerStatusSlot,
   enableReassign = false,
   reassignOptions = [],
   currentAssigneeValue = "",
@@ -526,6 +528,7 @@ export function CommentThread({
           imageUploadHandler={imageUploadHandler}
           contentClassName="min-h-[60px] text-sm"
         />
+        {composerStatusSlot}
         <div className="flex items-center justify-end gap-3">
           {(imageUploadHandler || onAttachImage) && (
             <div className="mr-auto flex items-center gap-3">

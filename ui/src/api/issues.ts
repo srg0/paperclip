@@ -15,6 +15,11 @@ export type IssueUpdateResponse = Issue & {
   comment?: IssueComment | null;
 };
 
+export type IssueCommentResponse = IssueUpdateResponse & {
+  atlasFollowupTriggered?: boolean;
+  interruptedRunId?: string | null;
+};
+
 export const issuesApi = {
   list: (
     companyId: string,
@@ -77,7 +82,7 @@ export const issuesApi = {
   release: (id: string) => api.post<Issue>(`/issues/${id}/release`, {}),
   listComments: (id: string) => api.get<IssueComment[]>(`/issues/${id}/comments`),
   addComment: (id: string, body: string, reopen?: boolean, interrupt?: boolean) =>
-    api.post<IssueComment>(
+    api.post<IssueCommentResponse>(
       `/issues/${id}/comments`,
       {
         body,

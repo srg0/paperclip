@@ -1569,7 +1569,12 @@ export function issueRoutes(
       }
     })();
 
-    res.json({ ...issue, comment });
+    res.json({
+      ...issue,
+      comment,
+      atlasFollowupTriggered,
+      interruptedRunId,
+    });
   });
 
   router.delete("/issues/:id", async (req, res) => {
@@ -1970,7 +1975,12 @@ export function issueRoutes(
       }
     })();
 
-    res.status(201).json(comment);
+    res.status(201).json({
+      ...currentIssue,
+      comment,
+      atlasFollowupTriggered,
+      interruptedRunId,
+    });
   });
 
   router.get("/issues/:id/attachments", async (req, res) => {

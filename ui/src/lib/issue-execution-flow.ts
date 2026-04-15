@@ -81,6 +81,14 @@ export interface IssueExecutionHeaderModel {
   standUrl: string | null;
 }
 
+export interface PendingAtlasFollowupStatus {
+  state: "pending" | "running" | "failed" | "completed";
+  title: string;
+  summary: string;
+  detail: string | null;
+  turnLabel: string | null;
+}
+
 type StageDefinition = {
   key: IssueExecutionStageKey;
   label: string;
@@ -189,6 +197,68 @@ export function parseExecutionDocument(document: IssueDocument | null | undefine
     slotStatus: parseField(FIELD_PATTERNS.slotStatus, body),
     updatedAt: parseField(FIELD_PATTERNS.updatedAt, body),
     recentMilestones: parseRecentMilestones(body),
+  };
+}
+
+export function buildPendingAtlasFollowupStatus(input: {
+  pendingSince: string | Date;
+  baseTurnNumber: number | null;
+  parsed: ParsedExecutionDocument;
+}): PendingAtlasFollowupStatus {
+  const { parsed, baseTurnNumber } = input;
+  const pendingSinceMs = new Date(input.pendingSince).getTime();
+  const projectionUpdatedMs = parsed.updatedAt ? new Date(parsed.updatedAt).getTime() : Number.NaN;
+  const hasFreshProjection = Number.isFinite(projectionUpdatedMs) && projectionUpdatedMs >= pendingSinceMs;
+  const hasNewerTurn = parsed.turnNumber !== null && (baseTurnNumber === null || parsed.turnNumber > baseTurnNumber);
+  const state = parsed.executionState?.toLowerCase() ?? null;
+  const turnLabel = hasNewerTurn ? parsed.turnLabel : parsed.turnLabel ?? null;
+
+  if (!hasFreshProjection && !hasNewerTurn) {
+    return {
+      state: "pending",
+      title: "Комментарий принят, запускаю следующий turn",
+      summary: "Atlas ещё не подтвердил новый execution в проекции issue.",
+      detail: "Ждём Atlas Executor и первый sync статуса.",
+      turnLabel: null,
+    };
+  }
+
+  if (state === "queued" || state === "running") {
+    return {
+      state: "running",
+      title: turnLabel ? `${turnLabel} уже запускается` : "Новый turn уже запускается",
+      summary: parsed.summary ?? "Atlas уже принял follow-up и ведёт execution.",
+      detail: parsed.attachmentState ? `Attachment state: ${parsed.attachmentState}` : parsed.nextStep,
+      turnLabel,
+    };
+  }
+
+  if (state === "failed" || state === "error") {
+    return {
+      state: "failed",
+      title: turnLabel ? `${turnLabel} завершился с ошибкой` : "Последний turn завершился с ошибкой",
+      summary: parsed.summary ?? "Execution не дошёл до успешного terminal state.",
+      detail: parsed.nextStep ?? parsed.failureClass ?? null,
+      turnLabel,
+    };
+  }
+
+  if (state === "completed" || state === "succeeded" || state === "success" || state === "ready") {
+    return {
+      state: "completed",
+      title: turnLabel ? `${turnLabel} дошёл до terminal state` : "Последний turn дошёл до terminal state",
+      summary: parsed.summary ?? "Execution завершён и ждёт следующего шага по verify/review.",
+      detail: parsed.nextStep,
+      turnLabel,
+    };
+  }
+
+  return {
+    state: "pending",
+    title: "Комментарий принят, уточняю текущее состояние turn",
+    summary: parsed.summary ?? "Execution уже обновился, но финальное состояние ещё неясно.",
+    detail: parsed.nextStep,
+    turnLabel,
   };
 }
 

@@ -237,6 +237,8 @@ describe("issue comment reopen routes", () => {
       .send({ body: "Сохрани желтую кнопку. Добавь черную обводку и скругление." });
 
     expect(res.status).toBe(201);
+    expect(res.body.atlasFollowupTriggered).toBe(true);
+    expect(res.body.comment?.id).toBe("comment-1");
     expect(mockWorkerManager.call).toHaveBeenCalledWith(
       "plugin-1",
       "performAction",
@@ -321,6 +323,8 @@ describe("issue comment reopen routes", () => {
       .send({ comment: "Оставь желтый цвет. Добавь черную обводку." });
 
     expect(res.status).toBe(200);
+    expect(res.body.atlasFollowupTriggered).toBe(true);
+    expect(res.body.comment?.id).toBe("comment-1");
     expect(mockWorkerManager.call).toHaveBeenCalledWith(
       "plugin-1",
       "performAction",

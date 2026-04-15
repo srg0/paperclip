@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Agent, Issue, IssueDocument } from "@paperclipai/shared";
-import { buildIssueExecutionHeaderModel } from "./issue-execution-flow";
+import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "./issue-execution-flow";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -129,5 +129,59 @@ describe("buildIssueExecutionHeaderModel", () => {
     expect(model.stages.find((stage) => stage.key === "atlas_execute")?.state).toBe("passed");
     expect(model.stages.find((stage) => stage.key === "stand_apply")?.state).toBe("passed");
     expect(model.stages.find((stage) => stage.key === "verify")?.state).toBe("passed");
+  });
+});
+
+describe("buildPendingAtlasFollowupStatus", () => {
+  it("stays pending until Atlas updates the execution projection after the new comment", () => {
+    const parsed = parseExecutionDocument(makeExecutionDocument(`# Сводка выполнения Atlas
+
+Проверка завершена и требует внимания
+
+## Что произошло
+
+* Задача: TURN 2
+* Статус: \`in_progress\`
+
+## Техническая привязка
+
+* Execution state: \`failed\`
+* Projection updated: \`2026-04-15T11:15:55.834Z\``));
+
+    const status = buildPendingAtlasFollowupStatus({
+      pendingSince: "2026-04-15T11:16:10.000Z",
+      baseTurnNumber: 2,
+      parsed,
+    });
+
+    expect(status.state).toBe("pending");
+    expect(status.title).toContain("запускаю следующий turn");
+  });
+
+  it("surfaces a running follow-up turn once the projection advances", () => {
+    const parsed = parseExecutionDocument(makeExecutionDocument(`# Сводка выполнения Atlas
+
+Исполнение уже началось
+
+## Что произошло
+
+- Turn: \`TURN 3\`
+- Статус: \`in_progress\`
+
+## Техническая привязка
+
+- Execution state: \`running\`
+- Attachment state: \`unattached\`
+- Projection updated: \`2026-04-15T11:16:15.000Z\``));
+
+    const status = buildPendingAtlasFollowupStatus({
+      pendingSince: "2026-04-15T11:16:10.000Z",
+      baseTurnNumber: 2,
+      parsed,
+    });
+
+    expect(status.state).toBe("running");
+    expect(status.title).toContain("TURN 3");
+    expect(status.detail).toContain("Attachment state: unattached");
   });
 });

@@ -34,7 +34,7 @@ import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LiveRunWidget } from "../components/LiveRunWidget";
-import { buildIssueExecutionHeaderModel } from "../lib/issue-execution-flow";
+import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
@@ -76,6 +76,12 @@ type IssueDetailComment = (IssueComment | OptimisticIssueComment) & {
   interruptedRunId?: string | null;
   queueState?: "queued";
   queueTargetRunId?: string | null;
+};
+
+type PendingAtlasFollowup = {
+  submittedAt: string;
+  baseTurnNumber: number | null;
+  commentId: string | null;
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -230,6 +236,7 @@ export function IssueDetail() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
+  const [pendingAtlasFollowup, setPendingAtlasFollowup] = useState<PendingAtlasFollowup | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
@@ -298,8 +305,12 @@ export function IssueDetail() {
     },
     enabled: !!issueId,
     retry: false,
-    refetchInterval: hasLiveRuns ? 3000 : false,
+    refetchInterval: hasLiveRuns || pendingAtlasFollowup ? 3000 : false,
   });
+  const parsedExecutionDocument = useMemo(
+    () => parseExecutionDocument(executionDocument),
+    [executionDocument],
+  );
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
@@ -541,6 +552,14 @@ export function IssueDetail() {
       agents: agents ?? [],
     });
   }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents]);
+  const pendingComposerStatus = useMemo(() => {
+    if (!pendingAtlasFollowup) return null;
+    return buildPendingAtlasFollowupStatus({
+      pendingSince: pendingAtlasFollowup.submittedAt,
+      baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
+      parsed: parsedExecutionDocument,
+    });
+  }, [pendingAtlasFollowup, parsedExecutionDocument]);
 
   const invalidateIssue = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
@@ -614,16 +633,30 @@ export function IssueDetail() {
         previousIssue,
       };
     },
-    onSuccess: (comment, _variables, context) => {
+    onSuccess: (response, _variables, context) => {
       if (context?.optimisticCommentId) {
         setOptimisticComments((current) =>
           current.filter((entry) => entry.clientId !== context.optimisticCommentId),
         );
       }
-      queryClient.setQueryData<IssueComment[]>(
-        queryKeys.issues.comments(issueId!),
-        (current) => upsertIssueComment(current, comment),
-      );
+      if (response.comment) {
+        queryClient.setQueryData<IssueComment[]>(
+          queryKeys.issues.comments(issueId!),
+          (current) => upsertIssueComment(current, response.comment!),
+        );
+      }
+      if (response.id) {
+        queryClient.setQueryData<Issue>(queryKeys.issues.detail(issueId!), response);
+      }
+      if (response.atlasFollowupTriggered) {
+        setPendingAtlasFollowup({
+          submittedAt: new Date().toISOString(),
+          baseTurnNumber: parsedExecutionDocument.turnNumber,
+          commentId: response.comment?.id ?? null,
+        });
+      } else {
+        setPendingAtlasFollowup(null);
+      }
     },
     onError: (err, _variables, context) => {
       if (context?.optimisticCommentId) {
@@ -1302,6 +1335,26 @@ export function IssueDetail() {
               await uploadAttachment.mutateAsync(file);
             }}
             liveRunSlot={<LiveRunWidget issueId={issueId!} companyId={issue.companyId} />}
+            composerStatusSlot={pendingComposerStatus ? (
+              <div
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-xs",
+                  pendingComposerStatus.state === "failed"
+                    ? "border-red-500/30 bg-red-500/[0.06] text-red-900 dark:text-red-100"
+                    : pendingComposerStatus.state === "completed"
+                      ? "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-900 dark:text-emerald-100"
+                      : pendingComposerStatus.state === "running"
+                        ? "border-cyan-500/30 bg-cyan-500/[0.06] text-cyan-900 dark:text-cyan-100"
+                        : "border-amber-500/30 bg-amber-500/[0.06] text-amber-900 dark:text-amber-100"
+                )}
+              >
+                <div className="font-medium">{pendingComposerStatus.title}</div>
+                <div className="mt-1 opacity-90">{pendingComposerStatus.summary}</div>
+                {pendingComposerStatus.detail ? (
+                  <div className="mt-1 opacity-75">{pendingComposerStatus.detail}</div>
+                ) : null}
+              </div>
+            ) : null}
           />
         </TabsContent>
 
