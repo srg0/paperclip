@@ -1,0 +1,133 @@
+// @vitest-environment node
+
+import { describe, expect, it } from "vitest";
+import type { Agent, Issue, IssueDocument } from "@paperclipai/shared";
+import { buildIssueExecutionHeaderModel } from "./issue-execution-flow";
+
+function makeIssue(overrides: Partial<Issue> = {}): Issue {
+  return {
+    id: "issue-1",
+    companyId: "company-1",
+    projectId: null,
+    projectWorkspaceId: null,
+    goalId: null,
+    parentId: null,
+    title: "Issue title",
+    description: null,
+    status: "in_progress",
+    priority: "medium",
+    assigneeAgentId: "agent-delivery",
+    assigneeUserId: null,
+    createdByAgentId: null,
+    createdByUserId: null,
+    issueNumber: 1,
+    identifier: "HOM-553",
+    requestDepth: 0,
+    billingCode: null,
+    assigneeAdapterOverrides: null,
+    executionWorkspaceId: null,
+    executionWorkspacePreference: null,
+    executionWorkspaceSettings: null,
+    checkoutRunId: null,
+    executionRunId: null,
+    executionAgentNameKey: null,
+    executionLockedAt: null,
+    startedAt: null,
+    completedAt: null,
+    cancelledAt: null,
+    hiddenAt: null,
+    createdAt: new Date("2026-04-15T02:00:00.000Z"),
+    updatedAt: new Date("2026-04-15T02:05:00.000Z"),
+    labels: [],
+    labelIds: [],
+    myLastTouchAt: null,
+    lastExternalCommentAt: null,
+    isUnreadForMe: false,
+    ...overrides,
+  };
+}
+
+function makeAgent(id: string, name: string, urlKey: string): Agent {
+  return {
+    id,
+    companyId: "company-1",
+    name,
+    urlKey,
+    role: name,
+    adapterType: "codex",
+    model: null,
+    icon: name.slice(0, 1),
+    systemPrompt: null,
+    instructions: null,
+    description: null,
+    isArchived: false,
+    isDisabled: false,
+    isSystem: false,
+    createdAt: new Date("2026-04-15T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-15T00:00:00.000Z"),
+  } as unknown as Agent;
+}
+
+function makeExecutionDocument(body: string): IssueDocument {
+  return {
+    id: "doc-1",
+    companyId: "company-1",
+    issueId: "issue-1",
+    key: "atlas-execution",
+    title: "Сводка выполнения Atlas",
+    format: "markdown",
+    body,
+    latestRevisionId: null,
+    latestRevisionNumber: 1,
+    createdByAgentId: null,
+    createdByUserId: null,
+    updatedByAgentId: null,
+    updatedByUserId: null,
+    createdAt: new Date("2026-04-15T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-15T02:05:17.267Z"),
+  };
+}
+
+describe("buildIssueExecutionHeaderModel", () => {
+  it("prefers the latest execution document over stale assignee ownership when auto-review is blocked", () => {
+    const model = buildIssueExecutionHeaderModel({
+      issue: makeIssue(),
+      executionDocument: makeExecutionDocument(`# Сводка выполнения Atlas
+
+Проверка завершена, но auto-review заблокирован
+
+## Что произошло
+
+- Следующий шаг: Нужен сценарный или assertion-driven verify по последнему запросу.
+- Проверка: \`passed\`
+- Turn: \`TURN 2\`
+
+## Последние этапы
+
+- **Atlas Executor** — TURN 2 взят в работу: Исполнение идет в слоте ai04. (2026-04-15 02:00:11)
+- **Stand Controller** — Результат опубликован и доступен: Открой https://ai04.homio.pro. (2026-04-15 02:03:53)
+- **Technical Verifier** — Проверка недостаточна для auto-review: VerifyReport зеленый, но слишком общий. (2026-04-15 02:03:53)
+- **Reporter** — Автопринятие заблокировано: Execution завершен, но verify не доказал выполнение последнего запроса. (2026-04-15 02:03:53)
+
+## Техническая привязка
+
+- Execution state: \`completed\`
+- Attachment state: \`attached\`
+- Projection updated: \`2026-04-15T02:05:17.248Z\``),
+      linkedRuns: [],
+      liveRuns: [],
+      activeRun: null,
+      activity: [],
+      agents: [
+        makeAgent("agent-delivery", "Delivery Orchestrator", "delivery-orchestrator"),
+        makeAgent("agent-reporter", "Reporter", "reporter"),
+      ],
+    });
+
+    expect(model.currentAgent).toBe("Delivery Orchestrator");
+    expect(model.stages.find((stage) => stage.key === "report")?.state).toBe("blocked");
+    expect(model.stages.find((stage) => stage.key === "atlas_execute")?.state).toBe("passed");
+    expect(model.stages.find((stage) => stage.key === "stand_apply")?.state).toBe("passed");
+    expect(model.stages.find((stage) => stage.key === "verify")?.state).toBe("passed");
+  });
+});

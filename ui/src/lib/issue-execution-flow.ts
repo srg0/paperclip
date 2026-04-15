@@ -229,16 +229,40 @@ function inferCurrentStage(input: {
   const activeStage = activeRun ? getAgentStage(activeRun.agentId, agentMap) : null;
   if (activeStage) return activeStage;
 
-  const assigneeStage = getAgentStage(issue.assigneeAgentId, agentMap);
-  if (assigneeStage && issue.status !== "done" && issue.status !== "cancelled") {
-    return assigneeStage;
+  const latestMilestoneStage = (() => {
+    const lastMilestone = [...parsed.recentMilestones]
+      .reverse()
+      .find((milestone) => Boolean(normalizeStageKey(milestone.role)));
+    return normalizeStageKey(lastMilestone?.role ?? null);
+  })();
+  if (latestMilestoneStage && (parsed.turnNumber || parsed.executionState || parsed.verifyStatus)) {
+    return latestMilestoneStage;
   }
 
-  if (issue.status === "in_review" || issue.status === "done") return "report";
-  if (parsed.verifyStatus) return "verify";
+  const successExecution = Boolean(
+    parsed.executionState
+    && ["completed", "succeeded", "success", "ready"].includes(parsed.executionState.toLowerCase()),
+  );
+  const autoReviewBlocked = Boolean(
+    parsed.verifyStatus === "passed"
+    && [parsed.headline, parsed.summary, parsed.nextStep]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes("auto-review заблокирован"),
+  );
+
+  if (issue.status === "in_review" || String(issue.status) === "done") return "report";
+  if (autoReviewBlocked && successExecution) return "report";
+  if (parsed.verifyStatus) return successExecution ? "verify" : "verify";
   if (parsed.attachmentState === "attached" || parsed.standUrl) return "stand_apply";
   if (parsed.executionState === "running" || parsed.executionState === "queued" || parsed.executionState === "completed") {
     return "atlas_execute";
+  }
+
+  const assigneeStage = getAgentStage(issue.assigneeAgentId, agentMap);
+  if (assigneeStage && issue.status !== "done" && issue.status !== "cancelled") {
+    return assigneeStage;
   }
   if (issue.status === "in_progress" || issue.status === "blocked") return "orchestrate";
   return null;
@@ -386,6 +410,18 @@ export function buildIssueExecutionHeaderModel(input: {
     }
   }
   const parsed = parseExecutionDocument(input.executionDocument);
+  const successExecution = Boolean(
+    parsed.executionState
+    && ["completed", "succeeded", "success", "ready"].includes(parsed.executionState.toLowerCase()),
+  );
+  const autoReviewBlocked = Boolean(
+    parsed.verifyStatus === "passed"
+    && [parsed.headline, parsed.summary, parsed.nextStep]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes("auto-review заблокирован"),
+  );
   const currentStage = inferCurrentStage({
     issue: input.issue,
     activeRun: input.activeRun,
@@ -412,7 +448,7 @@ export function buildIssueExecutionHeaderModel(input: {
   });
   const currentStageIndex = getStageIndex(currentStage);
   const loopCount = [...stageOccurrences.values()].reduce((total, count) => total + Math.max(0, count - 1), 0);
-  const stages = STAGES.map((stage, index): IssueExecutionHeaderStage => {
+  let stages = STAGES.map((stage, index): IssueExecutionHeaderStage => {
     const occurrences = stageOccurrences.get(stage.key) ?? 0;
     let state: IssueExecutionStageState = "not_started";
     if (index < currentStageIndex || (input.issue.status === "in_review" && index <= getStageIndex("report")) || input.issue.status === "done") {
@@ -420,6 +456,7 @@ export function buildIssueExecutionHeaderModel(input: {
     }
     if (index === currentStageIndex) {
       if (parsed.failureClass) state = "failed";
+      else if (stage.key === "report" && autoReviewBlocked && successExecution) state = "blocked";
       else if (retryCount > 0 && isStageActive) state = "retrying";
       else if (occurrences > 1) state = "looping";
       else state = isStageActive ? "running" : "passed";
@@ -436,6 +473,25 @@ export function buildIssueExecutionHeaderModel(input: {
       note: stage.key === currentStage ? parsed.nextStep : null,
     };
   });
+
+  if (successExecution && parsed.verifyStatus) {
+    stages = stages.map((stage) => {
+      if (stage.key === "report" && autoReviewBlocked) {
+        return {
+          ...stage,
+          state: "blocked",
+          note: parsed.nextStep ?? stage.note,
+        };
+      }
+      if (stage.key !== "report" && stage.state === "not_started") {
+        return {
+          ...stage,
+          state: "passed",
+        };
+      }
+      return stage;
+    });
+  }
 
   const currentAgent = input.activeRun?.agentName
     ?? agentMap.get(input.issue.assigneeAgentId ?? "")?.name
