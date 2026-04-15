@@ -385,11 +385,26 @@ describe("issue comment reopen routes", () => {
   });
 
   it("routes reassigned comments to the selected agent instead of Atlas follow-up", async () => {
-    const issue = makeIssue("todo");
+    const issue = {
+      ...makeIssue("todo"),
+      executionRunId: "run-1",
+    };
     mockIssueService.getById.mockResolvedValue(issue);
     mockIssueService.update.mockResolvedValue({
       ...issue,
       assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+    });
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "running",
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "cancelled",
     });
     mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
       key: "atlas-execution",
@@ -410,6 +425,8 @@ describe("issue comment reopen routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(res.body.interruptedRunId).toBe("run-1");
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1");
     expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
       "plugin-1",
       "performAction",

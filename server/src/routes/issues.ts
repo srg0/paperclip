@@ -1368,9 +1368,14 @@ export function issueRoutes(
       hiddenAt: hiddenAtRaw,
       ...updateFields
     } = req.body;
+    const directedCommentReassignment = Boolean(commentBody) && assigneeWillChange;
+    const shouldInterruptForDirectedComment =
+      directedCommentReassignment &&
+      req.actor.type === "board" &&
+      interruptRequested !== true;
     let interruptedRunId: string | null = null;
 
-    if (interruptRequested) {
+    if (interruptRequested || shouldInterruptForDirectedComment) {
       if (!commentBody) {
         res.status(400).json({ error: "Interrupt is only supported when posting a comment" });
         return;
@@ -1479,7 +1484,6 @@ export function issueRoutes(
       },
     });
 
-    const directedCommentReassignment = Boolean(commentBody) && assigneeWillChange;
     let comment = null;
     let atlasFollowupTriggered = false;
     if (commentBody) {
