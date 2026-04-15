@@ -9,6 +9,15 @@ export interface AssigneeOption {
   searchText?: string;
 }
 
+interface DeliveryOrchestratorCandidate {
+  id: string;
+  name?: string | null;
+  title?: string | null;
+  role?: string | null;
+  urlKey?: string | null;
+  status?: string | null;
+}
+
 interface CommentAssigneeSuggestionInput {
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
@@ -23,6 +32,39 @@ export function assigneeValueFromSelection(selection: Partial<AssigneeSelection>
   if (selection.assigneeAgentId) return `agent:${selection.assigneeAgentId}`;
   if (selection.assigneeUserId) return `user:${selection.assigneeUserId}`;
   return "";
+}
+
+function normalizeCandidateText(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+export function isDeliveryOrchestratorAgent(candidate: DeliveryOrchestratorCandidate | null | undefined): boolean {
+  if (!candidate) return false;
+  const status = normalizeCandidateText(candidate.status);
+  if (status === "terminated" || status === "pending approval" || status === "pending_approval") {
+    return false;
+  }
+  const urlKey = normalizeCandidateText(candidate.urlKey);
+  if (urlKey === "delivery orchestrator") return true;
+
+  const tokens = [
+    normalizeCandidateText(candidate.name),
+    normalizeCandidateText(candidate.title),
+    normalizeCandidateText(candidate.role),
+  ].filter(Boolean);
+
+  return tokens.some((value) => value.includes("delivery orchestrator"));
+}
+
+export function findDeliveryOrchestratorAgent<T extends DeliveryOrchestratorCandidate>(
+  candidates: T[] | null | undefined,
+): T | null {
+  if (!candidates || candidates.length === 0) return null;
+  return candidates.find((candidate) => isDeliveryOrchestratorAgent(candidate)) ?? null;
 }
 
 export function suggestedCommentAssigneeValue(

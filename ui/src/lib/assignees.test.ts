@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assigneeValueFromSelection,
   currentUserAssigneeOption,
+  findDeliveryOrchestratorAgent,
   formatAssigneeUserLabel,
+  isDeliveryOrchestratorAgent,
   parseAssigneeValue,
   suggestedCommentAssigneeValue,
 } from "./assignees";
@@ -88,5 +90,26 @@ describe("assignee selection helpers", () => {
         "agent-self",
       ),
     ).toBe("agent:agent-123");
+  });
+
+  it("detects Delivery Orchestrator from urlKey and readable name", () => {
+    expect(
+      isDeliveryOrchestratorAgent({
+        id: "agent-1",
+        name: "Delivery Orchestrator",
+        urlKey: "delivery-orchestrator",
+        status: "active",
+      }),
+    ).toBe(true);
+  });
+
+  it("finds the first active Delivery Orchestrator candidate", () => {
+    expect(
+      findDeliveryOrchestratorAgent([
+        { id: "agent-1", name: "Reporter", urlKey: "reporter", status: "active" },
+        { id: "agent-2", name: "Delivery Orchestrator", urlKey: "delivery-orchestrator", status: "active" },
+        { id: "agent-3", name: "Delivery Orchestrator", urlKey: "delivery-orchestrator-2", status: "terminated" },
+      ]),
+    ).toEqual({ id: "agent-2", name: "Delivery Orchestrator", urlKey: "delivery-orchestrator", status: "active" });
   });
 });

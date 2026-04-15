@@ -341,6 +341,10 @@ export function CommentThread({
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
   const hasScrolledRef = useRef(false);
+  const directedAgentOption =
+    enableReassign && reassignTarget !== currentAssigneeValue
+      ? reassignOptions.find((option) => option.id === reassignTarget) ?? null
+      : null;
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = comments.map((comment) => ({
@@ -529,6 +533,12 @@ export function CommentThread({
           contentClassName="min-h-[60px] text-sm"
         />
         {composerStatusSlot}
+        {directedAgentOption ? (
+          <div className="rounded-md border border-cyan-500/25 bg-cyan-500/[0.05] px-3 py-2 text-xs text-cyan-900 dark:text-cyan-100">
+            This comment will be routed to <span className="font-medium">{directedAgentOption.label}</span> from the
+            full issue context instead of starting a generic follow-up turn.
+          </div>
+        ) : null}
         <div className="flex items-center justify-end gap-3">
           {(imageUploadHandler || onAttachImage) && (
             <div className="mr-auto flex items-center gap-3">

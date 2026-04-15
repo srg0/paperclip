@@ -17,6 +17,7 @@ import { useToast } from "../context/ToastContext";
 import {
   assigneeValueFromSelection,
   currentUserAssigneeOption,
+  findDeliveryOrchestratorAgent,
   parseAssigneeValue,
 } from "../lib/assignees";
 import {
@@ -355,6 +356,10 @@ export function NewIssueDialog() {
   const selectedAssignee = useMemo(() => parseAssigneeValue(assigneeValue), [assigneeValue]);
   const selectedAssigneeAgentId = selectedAssignee.assigneeAgentId;
   const selectedAssigneeUserId = selectedAssignee.assigneeUserId;
+  const deliveryOrchestratorAssigneeValue = useMemo(() => {
+    const agent = findDeliveryOrchestratorAgent(agents ?? []);
+    return agent ? assigneeValueFromSelection({ assigneeAgentId: agent.id }) : "";
+  }, [agents]);
 
   const assigneeAdapterType = (agents ?? []).find((agent) => agent.id === selectedAssigneeAgentId)?.adapterType ?? null;
   const supportsAssigneeOverrides = Boolean(
@@ -563,6 +568,20 @@ export function NewIssueDialog() {
       executionWorkspaceDefaultProjectId.current = defaultProjectId || null;
     }
   }, [newIssueOpen, newIssueDefaults, orderedProjects]);
+
+  useEffect(() => {
+    if (!newIssueOpen) return;
+    if (assigneeValue) return;
+    if (newIssueDefaults.assigneeAgentId || newIssueDefaults.assigneeUserId) return;
+    if (!deliveryOrchestratorAssigneeValue) return;
+    setAssigneeValue(deliveryOrchestratorAssigneeValue);
+  }, [
+    assigneeValue,
+    deliveryOrchestratorAssigneeValue,
+    newIssueDefaults.assigneeAgentId,
+    newIssueDefaults.assigneeUserId,
+    newIssueOpen,
+  ]);
 
   useEffect(() => {
     if (!supportsAssigneeOverrides) {

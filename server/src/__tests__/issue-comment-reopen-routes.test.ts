@@ -8,6 +8,7 @@ import { errorHandler } from "../middleware/index.js";
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   update: vi.fn(),
+  create: vi.fn(),
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
   listAttachments: vi.fn(),
@@ -33,6 +34,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  list: vi.fn(),
 }));
 
 const mockPluginRegistry = vi.hoisted(() => ({
@@ -119,10 +121,46 @@ describe("issue comment reopen routes", () => {
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.listAttachments.mockResolvedValue([]);
     mockIssueService.listComments.mockResolvedValue([]);
+    mockIssueService.create.mockResolvedValue({
+      id: "issue-created-1",
+      companyId: "company-1",
+      status: "todo",
+      assigneeAgentId: "delivery-agent-id",
+      assigneeUserId: null,
+      identifier: "PAP-581",
+      title: "Created",
+    });
+    mockAgentService.list.mockResolvedValue([]);
     mockStorage.getObject.mockResolvedValue({
       contentType: "image/png",
       stream: Readable.from([Buffer.from("image-bytes")]),
     });
+  });
+
+  it("defaults new issues to Delivery Orchestrator when no explicit assignee is provided", async () => {
+    mockAgentService.list.mockResolvedValue([
+      {
+        id: "delivery-agent-id",
+        name: "Delivery Orchestrator",
+        urlKey: "delivery-orchestrator",
+        role: "general",
+        title: "Delivery Orchestrator",
+        status: "active",
+      },
+    ]);
+
+    const res = await request(createApp())
+      .post("/api/companies/company-1/issues")
+      .send({ title: "New issue" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        title: "New issue",
+        assigneeAgentId: "delivery-agent-id",
+      }),
+    );
   });
 
   it("treats reopen=true as a no-op when the issue is already open", async () => {
@@ -343,6 +381,59 @@ describe("issue comment reopen routes", () => {
         renderEnvironment: null,
       },
       15_000,
+    );
+  });
+
+  it("routes reassigned comments to the selected agent instead of Atlas follow-up", async () => {
+    const issue = makeIssue("todo");
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockResolvedValue({
+      ...issue,
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+    });
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 2`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        comment: "Расскажи, что именно ты проверил и что осталось сомнительным.",
+        assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      expect.objectContaining({
+        key: "atlas-bridge-followup-issue-execution",
+      }),
+      15_000,
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      expect.objectContaining({
+        reason: "issue_commented",
+        payload: expect.objectContaining({
+          issueId: "11111111-1111-4111-8111-111111111111",
+          commentId: "comment-1",
+        }),
+        contextSnapshot: expect.objectContaining({
+          issueId: "11111111-1111-4111-8111-111111111111",
+          commentId: "comment-1",
+          wakeCommentId: "comment-1",
+          source: "issue.comment.reassign",
+          wakeReason: "issue_commented",
+        }),
+      }),
     );
   });
 

@@ -78,6 +78,34 @@ function isAtlasMergeRequestIntent(commentBody: string | null | undefined): bool
   );
 }
 
+function normalizeAgentMatcherText(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function isDeliveryOrchestratorAgent(agent: {
+  name?: string | null;
+  title?: string | null;
+  role?: string | null;
+  urlKey?: string | null;
+  status?: string | null;
+}) {
+  const status = normalizeAgentMatcherText(agent.status);
+  if (status === "terminated" || status === "pending approval" || status === "pending_approval") {
+    return false;
+  }
+  const urlKey = normalizeAgentMatcherText(agent.urlKey);
+  if (urlKey === "delivery orchestrator") return true;
+  return [
+    normalizeAgentMatcherText(agent.name),
+    normalizeAgentMatcherText(agent.title),
+    normalizeAgentMatcherText(agent.role),
+  ].some((value) => value.includes("delivery orchestrator"));
+}
+
 export function issueRoutes(
   db: Db,
   storage: StorageService,
@@ -1264,9 +1292,16 @@ export function issueRoutes(
       await assertCanAssignTasks(req, companyId);
     }
 
+    let defaultAssigneeAgentId: string | null = null;
+    if (!req.body.assigneeAgentId && !req.body.assigneeUserId) {
+      const companyAgents = await agentsSvc.list(companyId);
+      defaultAssigneeAgentId = companyAgents.find((agent) => isDeliveryOrchestratorAgent(agent))?.id ?? null;
+    }
+
     const actor = getActorInfo(req);
     const issue = await svc.create(companyId, {
       ...req.body,
+      ...(defaultAssigneeAgentId ? { assigneeAgentId: defaultAssigneeAgentId } : {}),
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
@@ -1444,6 +1479,7 @@ export function issueRoutes(
       },
     });
 
+    const directedCommentReassignment = Boolean(commentBody) && assigneeWillChange;
     let comment = null;
     let atlasFollowupTriggered = false;
     if (commentBody) {
@@ -1472,13 +1508,15 @@ export function issueRoutes(
         },
       });
 
-      atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
-        req,
-        issue,
-        commentId: comment.id,
-        commentBody,
-        actor,
-      });
+      if (!directedCommentReassignment) {
+        atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
+          req,
+          issue,
+          commentId: comment.id,
+          commentBody,
+          actor,
+        });
+      }
 
     }
 
@@ -1493,30 +1531,55 @@ export function issueRoutes(
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
 
       if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
-        wakeups.set(issue.assigneeAgentId, {
-          source: "assignment",
-          triggerDetail: "system",
-          reason: "issue_assigned",
-          payload: {
-            issueId: issue.id,
-            mutation: "update",
-            ...(interruptedRunId ? { interruptedRunId } : {}),
-          },
-          requestedByActorType: actor.actorType,
-          requestedByActorId: actor.actorId,
-          contextSnapshot: {
-            issueId: issue.id,
-            source: "issue.update",
-            ...(interruptedRunId ? { interruptedRunId } : {}),
-          },
-        });
+        if (commentBody && comment) {
+          wakeups.set(issue.assigneeAgentId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: "issue_commented",
+            payload: {
+              issueId: issue.id,
+              commentId: comment.id,
+              mutation: "comment",
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: issue.id,
+              taskId: issue.id,
+              commentId: comment.id,
+              wakeCommentId: comment.id,
+              source: "issue.comment.reassign",
+              wakeReason: "issue_commented",
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+          });
+        } else {
+          wakeups.set(issue.assigneeAgentId, {
+            source: "assignment",
+            triggerDetail: "system",
+            reason: "issue_assigned",
+            payload: {
+              issueId: issue.id,
+              mutation: "update",
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: issue.id,
+              source: "issue.update",
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+          });
+        }
       }
 
       if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId) {
-        wakeups.set(issue.assigneeAgentId, {
-          source: "automation",
-          triggerDetail: "system",
-          reason: "issue_status_changed",
+          wakeups.set(issue.assigneeAgentId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: "issue_status_changed",
           payload: {
             issueId: issue.id,
             mutation: "update",
@@ -1524,11 +1587,11 @@ export function issueRoutes(
           },
           requestedByActorType: actor.actorType,
           requestedByActorId: actor.actorId,
-          contextSnapshot: {
-            issueId: issue.id,
-            source: "issue.status_change",
-            ...(interruptedRunId ? { interruptedRunId } : {}),
-          },
+            contextSnapshot: {
+              issueId: issue.id,
+              source: "issue.status_change",
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
         });
       }
 
@@ -1932,6 +1995,7 @@ export function issueRoutes(
               issueId: currentIssue.id,
               taskId: currentIssue.id,
               commentId: comment.id,
+              wakeCommentId: comment.id,
               source: "issue.comment",
               wakeReason: "issue_commented",
               ...(interruptedRunId ? { interruptedRunId } : {}),
