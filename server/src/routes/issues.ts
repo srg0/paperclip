@@ -1370,14 +1370,20 @@ export function issueRoutes(
     const isClosed = existing.status === "done" || existing.status === "cancelled";
     const {
       comment: commentBody,
+      commentTargetAgentId: commentTargetAgentIdRaw,
       reopen: reopenRequested,
       interrupt: interruptRequested,
       hiddenAt: hiddenAtRaw,
       ...updateFields
     } = req.body;
+    const directedCommentTargetId =
+      commentBody && typeof commentTargetAgentIdRaw === "string" && commentTargetAgentIdRaw.trim().length > 0
+        ? commentTargetAgentIdRaw.trim()
+        : null;
     const directedCommentReassignment = Boolean(commentBody) && assigneeWillChange;
+    const directedCommentRequested = Boolean(commentBody) && Boolean(directedCommentTargetId);
     const shouldInterruptForDirectedComment =
-      directedCommentReassignment &&
+      (directedCommentRequested || directedCommentReassignment) &&
       req.actor.type === "board" &&
       interruptRequested !== true;
     let interruptedRunId: string | null = null;
@@ -1519,7 +1525,7 @@ export function issueRoutes(
         },
       });
 
-      if (!directedCommentReassignment) {
+      if (!directedCommentRequested && !directedCommentReassignment) {
         atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
           req,
           issue,
@@ -1541,7 +1547,31 @@ export function issueRoutes(
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
 
-      if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
+      if (commentBody && comment && directedCommentTargetId) {
+        wakeups.set(directedCommentTargetId, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: "issue_commented",
+          payload: {
+            issueId: issue.id,
+            commentId: comment.id,
+            mutation: "comment",
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+          contextSnapshot: {
+            issueId: issue.id,
+            taskId: issue.id,
+            commentId: comment.id,
+            wakeCommentId: comment.id,
+            source: assigneeChanged ? "issue.comment.reassign" : "issue.comment.directed",
+            wakeReason: "issue_commented",
+            directedCommentTargetId,
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+        });
+      } else if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
         if (commentBody && comment) {
           wakeups.set(issue.assigneeAgentId, {
             source: "automation",
@@ -1859,7 +1889,15 @@ export function issueRoutes(
     const actor = getActorInfo(req);
     const reopenRequested = req.body.reopen === true;
     const interruptRequested = req.body.interrupt === true;
+    const directedCommentTargetId =
+      typeof req.body.commentTargetAgentId === "string" && req.body.commentTargetAgentId.trim().length > 0
+        ? req.body.commentTargetAgentId.trim()
+        : null;
     const isClosed = issue.status === "done" || issue.status === "cancelled";
+    const shouldInterruptForDirectedComment =
+      Boolean(directedCommentTargetId) &&
+      req.actor.type === "board" &&
+      interruptRequested !== true;
     let reopened = false;
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
@@ -1894,7 +1932,7 @@ export function issueRoutes(
       });
     }
 
-    if (interruptRequested) {
+    if (interruptRequested || shouldInterruptForDirectedComment) {
       if (req.actor.type !== "board") {
         res.status(403).json({ error: "Only board users can interrupt active runs from issue comments" });
         return;
@@ -1949,13 +1987,15 @@ export function issueRoutes(
       },
     });
 
-    const atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
-      req,
-      issue: currentIssue,
-      commentId: comment.id,
-      commentBody: req.body.body,
-      actor,
-    });
+    const atlasFollowupTriggered = directedCommentTargetId
+      ? false
+      : await maybeTriggerAtlasFollowupFromComment({
+        req,
+        issue: currentIssue,
+        commentId: comment.id,
+        commentBody: req.body.body,
+        actor,
+      });
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {
@@ -1964,7 +2004,31 @@ export function issueRoutes(
       const actorIsAgent = actor.actorType === "agent";
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const skipWake = selfComment || isClosed;
-      if (assigneeId && !atlasFollowupTriggered && (reopened || !skipWake)) {
+      if (directedCommentTargetId) {
+        wakeups.set(directedCommentTargetId, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: "issue_commented",
+          payload: {
+            issueId: currentIssue.id,
+            commentId: comment.id,
+            mutation: "comment",
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+          contextSnapshot: {
+            issueId: currentIssue.id,
+            taskId: currentIssue.id,
+            commentId: comment.id,
+            wakeCommentId: comment.id,
+            wakeReason: "issue_commented",
+            source: "issue.comment.directed",
+            directedCommentTargetId,
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+        });
+      } else if (assigneeId && !atlasFollowupTriggered && (reopened || !skipWake)) {
         if (reopened) {
           wakeups.set(assigneeId, {
             source: "automation",

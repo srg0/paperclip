@@ -41,7 +41,12 @@ interface CommentThreadProps {
   linkedRuns?: LinkedRunItem[];
   companyId?: string | null;
   projectId?: string | null;
-  onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
+  onAdd: (
+    body: string,
+    reopen?: boolean,
+    reassignment?: CommentReassignment,
+    commentTargetAgentId?: string | null,
+  ) => Promise<void>;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -342,7 +347,7 @@ export function CommentThread({
   const location = useLocation();
   const hasScrolledRef = useRef(false);
   const directedAgentOption =
-    enableReassign && reassignTarget !== currentAssigneeValue
+    enableReassign && reassignTarget.startsWith("agent:")
       ? reassignOptions.find((option) => option.id === reassignTarget) ?? null
       : null;
 
@@ -427,13 +432,20 @@ export function CommentThread({
     if (!trimmed) return;
     const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
     const reassignment = hasReassignment ? parseReassignment(reassignTarget) : null;
+    const directedAgentTargetId =
+      enableReassign && reassignTarget.startsWith("agent:") ? reassignTarget.slice("agent:".length) : null;
     const submittedBody = trimmed;
 
     setSubmitting(true);
     setBody("");
     try {
       // TODO: wire an explicit "send + interrupt" action through the composer if we expose it in the UI.
-      await onAdd(submittedBody, reopen ? true : undefined, reassignment ?? undefined);
+      await onAdd(
+        submittedBody,
+        reopen ? true : undefined,
+        reassignment ?? undefined,
+        directedAgentTargetId,
+      );
       if (draftKey) clearDraft(draftKey);
       setReopen(true);
       setReassignTarget(effectiveSuggestedAssigneeValue);
@@ -536,7 +548,7 @@ export function CommentThread({
         {directedAgentOption ? (
           <div className="rounded-md border border-cyan-500/25 bg-cyan-500/[0.05] px-3 py-2 text-xs text-cyan-900 dark:text-cyan-100">
             This comment will be routed to <span className="font-medium">{directedAgentOption.label}</span> from the
-            full issue context instead of starting a generic follow-up turn.
+            full issue context using that agent&apos;s own runtime settings instead of starting a generic follow-up turn.
           </div>
         ) : null}
         <div className="flex items-center justify-end gap-3">

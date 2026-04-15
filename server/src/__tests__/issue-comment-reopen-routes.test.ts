@@ -455,6 +455,74 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("routes comments to the currently selected agent without starting a generic Atlas follow-up", async () => {
+    const issue = {
+      ...makeIssue("todo"),
+      executionRunId: "run-1",
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "running",
+      contextSnapshot: { issueId: issue.id },
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "cancelled",
+    });
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 2`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        comment: "Ответь подробнее, что именно ты проверил и что осталось спорным.",
+        commentTargetAgentId: "22222222-2222-4222-8222-222222222222",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(res.body.interruptedRunId).toBe("run-1");
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1");
+    expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      expect.objectContaining({
+        key: "atlas-bridge-followup-issue-execution",
+      }),
+      15_000,
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({
+        reason: "issue_commented",
+        payload: expect.objectContaining({
+          issueId: issue.id,
+          commentId: "comment-1",
+        }),
+        contextSnapshot: expect.objectContaining({
+          issueId: issue.id,
+          commentId: "comment-1",
+          wakeCommentId: "comment-1",
+          source: "issue.comment.directed",
+          directedCommentTargetId: "22222222-2222-4222-8222-222222222222",
+        }),
+      }),
+    );
+  });
+
   it("interrupts legacy issue-scoped runs before routing reassigned comments", async () => {
     const issue = makeIssue("todo");
     mockIssueService.getById.mockResolvedValue(issue);
@@ -501,6 +569,68 @@ describe("issue comment reopen routes", () => {
           wakeCommentId: "comment-1",
           interruptedRunId: "legacy-run-1",
           source: "issue.comment.reassign",
+        }),
+      }),
+    );
+  });
+
+  it("routes direct comment posts to the selected agent without using Atlas follow-up", async () => {
+    const issue = {
+      ...makeIssue("todo"),
+      executionRunId: "run-2",
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-2",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "running",
+      contextSnapshot: { issueId: issue.id },
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-2",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "cancelled",
+    });
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({
+        body: "Скажи человеческим языком, почему ты принял именно такой вердикт.",
+        commentTargetAgentId: "22222222-2222-4222-8222-222222222222",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(res.body.interruptedRunId).toBe("run-2");
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-2");
+    expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      expect.objectContaining({
+        key: "atlas-bridge-followup-issue-execution",
+      }),
+      15_000,
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({
+        reason: "issue_commented",
+        contextSnapshot: expect.objectContaining({
+          issueId: issue.id,
+          wakeCommentId: "comment-1",
+          source: "issue.comment.directed",
+          directedCommentTargetId: "22222222-2222-4222-8222-222222222222",
         }),
       }),
     );

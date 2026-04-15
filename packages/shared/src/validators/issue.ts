@@ -66,6 +66,7 @@ export type CreateIssueLabel = z.infer<typeof createIssueLabelSchema>;
 
 export const updateIssueSchema = createIssueSchema.partial().extend({
   comment: z.string().min(1).optional(),
+  commentTargetAgentId: z.string().uuid().optional().nullable(),
   reopen: z.boolean().optional(),
   interrupt: z.boolean().optional(),
   hiddenAt: z.string().datetime().nullable().optional(),
@@ -83,6 +84,7 @@ export type CheckoutIssue = z.infer<typeof checkoutIssueSchema>;
 
 export const addIssueCommentSchema = z.object({
   body: z.string().min(1),
+  commentTargetAgentId: z.string().uuid().optional().nullable(),
   reopen: z.boolean().optional(),
   interrupt: z.boolean().optional(),
 });

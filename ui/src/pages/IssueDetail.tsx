@@ -603,8 +603,17 @@ export function IssueDetail() {
   });
 
   const addComment = useMutation({
-    mutationFn: ({ body, reopen, interrupt }: { body: string; reopen?: boolean; interrupt?: boolean }) =>
-      issuesApi.addComment(issueId!, body, reopen, interrupt),
+    mutationFn: ({
+      body,
+      reopen,
+      interrupt,
+      commentTargetAgentId,
+    }: {
+      body: string;
+      reopen?: boolean;
+      interrupt?: boolean;
+      commentTargetAgentId?: string | null;
+    }) => issuesApi.addComment(issueId!, body, reopen, interrupt, commentTargetAgentId),
     onMutate: async ({ body, reopen, interrupt }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.comments(issueId!) });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.detail(issueId!) });
@@ -719,14 +728,17 @@ export function IssueDetail() {
       reopen,
       interrupt,
       reassignment,
+      commentTargetAgentId,
     }: {
       body: string;
       reopen?: boolean;
       interrupt?: boolean;
       reassignment: CommentReassignment;
+      commentTargetAgentId?: string | null;
     }) =>
       issuesApi.update(issueId!, {
         comment: body,
+        ...(commentTargetAgentId ? { commentTargetAgentId } : {}),
         assigneeAgentId: reassignment.assigneeAgentId,
         assigneeUserId: reassignment.assigneeUserId,
         ...(reopen ? { status: "todo" } : {}),
@@ -1354,12 +1366,12 @@ export function IssueDetail() {
               await interruptQueuedComment.mutateAsync(runId);
             }}
             interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
-            onAdd={async (body, reopen, reassignment) => {
+            onAdd={async (body, reopen, reassignment, commentTargetAgentId) => {
               if (reassignment) {
-                await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });
+                await addCommentAndReassign.mutateAsync({ body, reopen, reassignment, commentTargetAgentId });
                 return;
               }
-              await addComment.mutateAsync({ body, reopen });
+              await addComment.mutateAsync({ body, reopen, commentTargetAgentId });
             }}
             imageUploadHandler={async (file) => {
               const attachment = await uploadAttachment.mutateAsync(file);
