@@ -35,6 +35,7 @@ import {
   approvalService,
   companySkillService,
   budgetService,
+  documentService,
   heartbeatService,
   issueApprovalService,
   issueService,
@@ -88,6 +89,7 @@ export function agentRoutes(db: Db) {
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
   const heartbeat = heartbeatService(db);
+  const documentsSvc = documentService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const secretsSvc = secretService(db);
   const instructions = agentInstructionsService();
@@ -99,6 +101,23 @@ export function agentRoutes(db: Db) {
   async function getCurrentUserRedactionOptions() {
     return {
       enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
+    };
+  }
+
+  function extractAtlasExecutionString(body: string | null | undefined, label: string): string | null {
+    if (typeof body !== "string" || body.trim().length === 0) return null;
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = `(?:^|\\n)\\s*-\\s*${escaped}:\\s*` + String.raw`\`?([^\`\n]+)\`?`;
+    const match = body.match(new RegExp(pattern, "i"));
+    return match?.[1]?.trim() || null;
+  }
+
+  function parseAtlasExecutionSummary(body: string | null | undefined) {
+    return {
+      executionState: extractAtlasExecutionString(body, "Execution state"),
+      atlasTaskId: extractAtlasExecutionString(body, "Atlas task"),
+      turnLabel: extractAtlasExecutionString(body, "Turn"),
+      slotEnv: extractAtlasExecutionString(body, "Slot env"),
     };
   }
 
@@ -2301,7 +2320,40 @@ export function agentRoutes(db: Db) {
       )
       .orderBy(desc(heartbeatRuns.createdAt));
 
-    res.json(liveRuns);
+    const responseRuns: Array<(typeof liveRuns)[number] & {
+      issueId?: string | null;
+      syntheticSource?: "atlas_execution";
+      openable?: boolean;
+      slotEnv?: string | null;
+    }> = liveRuns.map((run) => ({ ...run, issueId: issue.id }));
+
+    if (responseRuns.length === 0) {
+      const executionDocument = await documentsSvc.getIssueDocumentByKey(issue.id, "atlas-execution");
+      const parsedExecution = parseAtlasExecutionSummary(executionDocument?.body);
+      const executionState = parsedExecution.executionState?.toLowerCase() ?? null;
+      const isAtlasExecutionLive = executionState === "queued" || executionState === "running";
+      if (isAtlasExecutionLive && parsedExecution.atlasTaskId) {
+        const assignee = issue.assigneeAgentId ? await svc.getById(issue.assigneeAgentId) : null;
+        responseRuns.push({
+          id: parsedExecution.atlasTaskId,
+          status: executionState ?? "running",
+          invocationSource: "atlas_execution",
+          triggerDetail: parsedExecution.turnLabel ?? "Atlas execution",
+          startedAt: executionDocument?.updatedAt ?? issue.updatedAt ?? issue.createdAt,
+          finishedAt: null,
+          createdAt: executionDocument?.updatedAt ?? issue.updatedAt ?? issue.createdAt,
+          agentId: assignee?.id ?? issue.assigneeAgentId ?? "atlas-executor",
+          agentName: assignee?.name ?? "Atlas Executor",
+          adapterType: assignee?.adapterType ?? "atlas_execution",
+          issueId: issue.id,
+          syntheticSource: "atlas_execution",
+          openable: false,
+          slotEnv: parsedExecution.slotEnv,
+        });
+      }
+    }
+
+    res.json(responseRuns);
   });
 
   router.get("/issues/:issueId/active-run", async (req, res) => {

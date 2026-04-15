@@ -24,6 +24,9 @@ export interface LiveRunForIssue {
   agentName: string;
   adapterType: string;
   issueId?: string | null;
+  syntheticSource?: "atlas_execution" | null;
+  openable?: boolean;
+  slotEnv?: string | null;
 }
 
 export const heartbeatsApi = {

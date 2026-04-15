@@ -84,6 +84,10 @@ type PendingAtlasFollowup = {
   commentId: string | null;
 };
 
+function isSyntheticAtlasRun(run: { syntheticSource?: string | null } | null | undefined): boolean {
+  return run?.syntheticSource === "atlas_execution";
+}
+
 const ACTION_LABELS: Record<string, string> = {
   "issue.created": "created the issue",
   "issue.updated": "updated the issue",
@@ -315,7 +319,7 @@ export function IssueDetail() {
     () => (
       activeRun?.status === "running"
         ? activeRun
-        : (liveRuns ?? []).find((run) => run.status === "running") ?? null
+        : (liveRuns ?? []).find((run) => run.status === "running" && !isSyntheticAtlasRun(run)) ?? null
     ),
     [activeRun, liveRuns],
   );
@@ -649,11 +653,41 @@ export function IssueDetail() {
         queryClient.setQueryData<Issue>(queryKeys.issues.detail(issueId!), response);
       }
       if (response.atlasFollowupTriggered) {
+        const submittedAt = new Date().toISOString();
+        const atlasExecutorAgent = (agents ?? []).find((agent) => {
+          const candidate = `${agent.urlKey ?? ""} ${agent.name ?? ""} ${agent.role ?? ""}`.toLowerCase();
+          return candidate.includes("atlas-executor") || candidate.includes("atlas executor");
+        });
+        queryClient.setQueryData(
+          queryKeys.issues.liveRuns(issueId!),
+          (current: import("../api/heartbeats").LiveRunForIssue[] | undefined) => {
+            const next = (current ?? []).filter((run) => !isSyntheticAtlasRun(run));
+            next.unshift({
+              id: `atlas-followup:${response.comment?.id ?? submittedAt}`,
+              status: "queued",
+              invocationSource: "atlas_execution",
+              triggerDetail: parsedExecutionDocument.turnLabel
+                ? `Follow-up after ${parsedExecutionDocument.turnLabel}`
+                : "Atlas follow-up",
+              startedAt: submittedAt,
+              finishedAt: null,
+              createdAt: submittedAt,
+              agentId: atlasExecutorAgent?.id ?? issue?.assigneeAgentId ?? "atlas-executor",
+              agentName: atlasExecutorAgent?.name ?? "Atlas Executor",
+              adapterType: atlasExecutorAgent?.adapterType ?? "atlas_execution",
+              issueId: issueId!,
+              syntheticSource: "atlas_execution",
+              openable: false,
+            });
+            return next;
+          },
+        );
         setPendingAtlasFollowup({
-          submittedAt: new Date().toISOString(),
+          submittedAt,
           baseTurnNumber: parsedExecutionDocument.turnNumber,
           commentId: response.comment?.id ?? null,
         });
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
       } else {
         setPendingAtlasFollowup(null);
       }

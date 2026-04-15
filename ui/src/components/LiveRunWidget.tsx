@@ -24,6 +24,10 @@ function isRunActive(status: string): boolean {
   return status === "queued" || status === "running";
 }
 
+function isSyntheticAtlasRun(run: LiveRunForIssue): boolean {
+  return run.syntheticSource === "atlas_execution";
+}
+
 export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
   const queryClient = useQueryClient();
   const [cancellingRunIds, setCancellingRunIds] = useState(new Set<string>());
@@ -100,6 +104,7 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
       <div className="divide-y divide-border/60">
         {runs.map((run) => {
           const isActive = isRunActive(run.status);
+          const isSynthetic = isSyntheticAtlasRun(run);
           const transcript = transcriptByRun.get(run.id) ?? [];
           return (
             <section key={run.id} className="px-4 py-4">
@@ -121,7 +126,7 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {isActive && (
+                  {isActive && !isSynthetic && (
                     <button
                       onClick={() => handleCancelRun(run.id)}
                       disabled={cancellingRunIds.has(run.id)}
@@ -131,13 +136,19 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
                       {cancellingRunIds.has(run.id) ? "Stopping…" : "Stop"}
                     </button>
                   )}
-                  <Link
-                    to={`/agents/${run.agentId}/runs/${run.id}`}
-                    className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[11px] font-medium text-cyan-700 transition-colors hover:border-cyan-500/30 hover:text-cyan-600 dark:text-cyan-300"
-                  >
-                    Open run
-                    <ExternalLink className="h-3 w-3" />
-                  </Link>
+                  {isSynthetic ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-cyan-500/20 bg-cyan-500/[0.06] px-2.5 py-1 text-[11px] font-medium text-cyan-700 dark:text-cyan-300">
+                      Atlas execution
+                    </span>
+                  ) : (
+                    <Link
+                      to={`/agents/${run.agentId}/runs/${run.id}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[11px] font-medium text-cyan-700 transition-colors hover:border-cyan-500/30 hover:text-cyan-600 dark:text-cyan-300"
+                    >
+                      Open run
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  )}
                 </div>
               </div>
 
@@ -148,7 +159,13 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
                   limit={8}
                   streaming={isActive}
                   collapseStdout
-                  emptyMessage={hasOutputForRun(run.id) ? "Waiting for transcript parsing..." : "Waiting for run output..."}
+                  emptyMessage={
+                    isSynthetic
+                      ? "Waiting for Atlas execution updates in the issue summary..."
+                      : hasOutputForRun(run.id)
+                        ? "Waiting for transcript parsing..."
+                        : "Waiting for run output..."
+                  }
                 />
               </div>
             </section>

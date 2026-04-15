@@ -23,6 +23,10 @@ function isTerminalStatus(status: string): boolean {
   return status === "failed" || status === "timed_out" || status === "cancelled" || status === "succeeded";
 }
 
+function isSyntheticRun(run: LiveRunForIssue): boolean {
+  return run.syntheticSource === "atlas_execution";
+}
+
 function parsePersistedLogContent(
   runId: string,
   content: string,
@@ -74,13 +78,17 @@ export function useLiveRunTranscripts({
   });
 
   const runById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
-  const activeRunIds = useMemo(
-    () => new Set(runs.filter((run) => !isTerminalStatus(run.status)).map((run) => run.id)),
+  const logCapableRuns = useMemo(
+    () => runs.filter((run) => !isSyntheticRun(run)),
     [runs],
   );
+  const activeRunIds = useMemo(
+    () => new Set(logCapableRuns.filter((run) => !isTerminalStatus(run.status)).map((run) => run.id)),
+    [logCapableRuns],
+  );
   const runIdsKey = useMemo(
-    () => runs.map((run) => run.id).sort((a, b) => a.localeCompare(b)).join(","),
-    [runs],
+    () => logCapableRuns.map((run) => run.id).sort((a, b) => a.localeCompare(b)).join(","),
+    [logCapableRuns],
   );
 
   const appendChunks = (runId: string, chunks: Array<RunLogChunk & { dedupeKey: string }>) => {
@@ -132,7 +140,7 @@ export function useLiveRunTranscripts({
   }, [runs]);
 
   useEffect(() => {
-    if (runs.length === 0) return;
+    if (logCapableRuns.length === 0) return;
 
     let cancelled = false;
 
@@ -157,7 +165,7 @@ export function useLiveRunTranscripts({
     };
 
     const readAll = async () => {
-      await Promise.all(runs.map((run) => readRunLog(run)));
+      await Promise.all(logCapableRuns.map((run) => readRunLog(run)));
     };
 
     void readAll();
@@ -169,7 +177,7 @@ export function useLiveRunTranscripts({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [runIdsKey, runs]);
+  }, [logCapableRuns, runIdsKey]);
 
   useEffect(() => {
     if (!companyId || activeRunIds.size === 0) return;
