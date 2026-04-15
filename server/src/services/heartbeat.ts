@@ -4093,5 +4093,20 @@ export function heartbeatService(db: Db) {
         .limit(1);
       return run ?? null;
     },
+
+    getActiveRunForIssue: async (issueId: string) => {
+      const [run] = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(
+          and(
+            eq(heartbeatRuns.status, "running"),
+            sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`,
+          ),
+        )
+        .orderBy(desc(heartbeatRuns.startedAt))
+        .limit(1);
+      return run ?? null;
+    },
   };
 }

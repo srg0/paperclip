@@ -29,6 +29,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
   reportRunActivity: vi.fn(async () => undefined),
   getRun: vi.fn(async () => null),
   getActiveRunForAgent: vi.fn(async () => null),
+  getActiveRunForIssue: vi.fn(async () => null),
   cancelRun: vi.fn(async () => null),
 }));
 
@@ -449,6 +450,57 @@ describe("issue comment reopen routes", () => {
           wakeCommentId: "comment-1",
           source: "issue.comment.reassign",
           wakeReason: "issue_commented",
+        }),
+      }),
+    );
+  });
+
+  it("interrupts legacy issue-scoped runs before routing reassigned comments", async () => {
+    const issue = makeIssue("todo");
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockResolvedValue({
+      ...issue,
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+    });
+    mockHeartbeatService.getActiveRunForIssue.mockResolvedValue({
+      id: "legacy-run-1",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "running",
+      contextSnapshot: { issueId: issue.id },
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "legacy-run-1",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "cancelled",
+    });
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 2`"].join("\n"),
+    });
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        comment: "Explain the current verification gap in your own words.",
+        assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(res.body.interruptedRunId).toBe("legacy-run-1");
+    expect(mockHeartbeatService.getActiveRunForIssue).toHaveBeenCalledWith(issue.id);
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("legacy-run-1");
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      expect.objectContaining({
+        reason: "issue_commented",
+        contextSnapshot: expect.objectContaining({
+          issueId: issue.id,
+          wakeCommentId: "comment-1",
+          interruptedRunId: "legacy-run-1",
+          source: "issue.comment.reassign",
         }),
       }),
     );

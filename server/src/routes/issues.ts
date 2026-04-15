@@ -395,6 +395,13 @@ export function issueRoutes(
       }
     }
 
+    if (!runToInterrupt) {
+      const issueScopedRun = await heartbeat.getActiveRunForIssue(issue.id);
+      if (issueScopedRun?.status === "running") {
+        runToInterrupt = issueScopedRun;
+      }
+    }
+
     return runToInterrupt?.status === "running" ? runToInterrupt : null;
   }
 
