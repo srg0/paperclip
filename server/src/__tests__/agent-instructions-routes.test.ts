@@ -31,6 +31,8 @@ const mockSecretService = vi.hoisted(() => ({
   normalizeAdapterConfigForPersistence: vi.fn(async (_companyId: string, config: Record<string, unknown>) => config),
 }));
 
+const mockDocumentService = vi.hoisted(() => ({}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
@@ -40,6 +42,7 @@ vi.mock("../services/index.js", () => ({
   approvalService: () => ({}),
   companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
   budgetService: () => ({}),
+  documentService: () => mockDocumentService,
   heartbeatService: () => ({}),
   issueApprovalService: () => ({}),
   issueService: () => ({}),
