@@ -212,6 +212,39 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(issue?.checkoutRunId).toBe(runId);
   });
 
+  it("queues exactly one retry for issue-bound process adapters even when the pid was never recorded", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      adapterType: "process",
+      processPid: null,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns();
+    expect(result.reaped).toBe(1);
+    expect(result.runIds).toEqual([runId]);
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(2);
+
+    const failedRun = runs.find((row) => row.id === runId);
+    const retryRun = runs.find((row) => row.id !== runId);
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.errorCode).toBe("process_lost");
+    expect(retryRun?.status).toBe("queued");
+    expect(retryRun?.retryOfRunId).toBe(runId);
+    expect(retryRun?.processLossRetryCount).toBe(1);
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
+  });
+
   it("does not queue a second retry after the first process-loss retry was already used", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({
       processPid: 999_999_999,
@@ -237,6 +270,28 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBeNull();
     expect(issue?.checkoutRunId).toBe(runId);
+  });
+
+  it("does not queue a retry for process adapters without issue context when the pid is missing", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      adapterType: "process",
+      processPid: null,
+      includeIssue: false,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns();
+    expect(result.reaped).toBe(1);
+    expect(result.runIds).toEqual([runId]);
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("failed");
+    expect(runs[0]?.errorCode).toBe("process_lost");
+    expect(runs[0]?.retryOfRunId).toBeNull();
   });
 
   it("clears the detached warning when the run reports activity again", async () => {
@@ -295,6 +350,51 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       processPid: 999_999_999,
       runErrorCode: "process_lost",
       runError: "Process lost -- child pid 999999999 is no longer running; retrying once",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const wakeResult = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      contextSnapshot: { issueId, followup: true },
+      reason: "follow_up",
+      payload: { issueId, followup: true },
+    });
+
+    expect(wakeResult).toBeNull();
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBe(runId);
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.id).toBe(runId);
+
+    const deferredWake = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId))
+      .then((rows) =>
+        rows.find((row) => row.status === "deferred_issue_execution" && row.reason === "issue_execution_process_loss_retry_pending") ?? null,
+      );
+    expect(deferredWake).toBeTruthy();
+  });
+
+  it("defers follow-up while a process adapter retry is still pending even when the lost run never recorded a pid", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      adapterType: "process",
+      agentStatus: "active",
+      runStatus: "failed",
+      processPid: null,
+      runErrorCode: "process_lost",
+      runError: "Process lost -- server may have restarted; retrying once",
     });
     const heartbeat = heartbeatService(db);
 

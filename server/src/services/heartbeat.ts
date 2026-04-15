@@ -77,6 +77,10 @@ const SESSIONED_LOCAL_ADAPTERS = new Set([
   "opencode_local",
   "pi_local",
 ]);
+const PROCESS_LOSS_RETRY_ADAPTERS = new Set([
+  ...SESSIONED_LOCAL_ADAPTERS,
+  "process",
+]);
 
 export function applyPersistedExecutionWorkspaceConfig(input: {
   config: Record<string, unknown>;
@@ -765,6 +769,25 @@ function isSameTaskScope(left: string | null, right: string | null) {
 
 function isTrackedLocalChildProcessAdapter(adapterType: string) {
   return SESSIONED_LOCAL_ADAPTERS.has(adapterType);
+}
+
+function hasIssueExecutionContext(run: typeof heartbeatRuns.$inferSelect) {
+  const context = parseObject(run.contextSnapshot);
+  return Boolean(readNonEmptyString(context.issueId));
+}
+
+function shouldRetryProcessLostRun(
+  run: typeof heartbeatRuns.$inferSelect,
+  adapterType: string,
+) {
+  if (!PROCESS_LOSS_RETRY_ADAPTERS.has(adapterType)) return false;
+  if ((run.processLossRetryCount ?? 0) >= 1) return false;
+  const hasRecordedPid =
+    typeof run.processPid === "number" &&
+    Number.isInteger(run.processPid) &&
+    run.processPid > 0;
+  if (hasRecordedPid) return true;
+  return hasIssueExecutionContext(run);
 }
 
 // A positive liveness check means some process currently owns the PID.
@@ -1890,7 +1913,7 @@ export function heartbeatService(db: Db) {
         continue;
       }
 
-      const shouldRetry = tracksLocalChild && !!run.processPid && (run.processLossRetryCount ?? 0) < 1;
+      const shouldRetry = shouldRetryProcessLostRun(run, adapterType);
       const baseMessage = run.processPid
         ? `Process lost -- child pid ${run.processPid} is no longer running`
         : "Process lost -- server may have restarted";
@@ -3269,9 +3292,7 @@ export function heartbeatService(db: Db) {
           processLossRetryCandidate !== null &&
           processLossRetryCandidate.status === "failed" &&
           processLossRetryCandidate.errorCode === "process_lost" &&
-          Boolean(processLossRetryCandidate.processPid) &&
-          (processLossRetryCandidate.processLossRetryCount ?? 0) < 1 &&
-          isTrackedLocalChildProcessAdapter(agent.adapterType);
+          shouldRetryProcessLostRun(processLossRetryCandidate, agent.adapterType);
 
         if (!activeExecutionRun && issue.executionRunId && !waitingForProcessLossRetry) {
           await tx
