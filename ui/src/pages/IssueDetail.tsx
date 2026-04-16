@@ -33,7 +33,7 @@ import { IssueExecutionHeader } from "../components/IssueExecutionHeader";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
-import { LiveRunWidget } from "../components/LiveRunWidget";
+import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
 import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -1380,7 +1380,7 @@ export function IssueDetail() {
             onAttachImage={async (file) => {
               await uploadAttachment.mutateAsync(file);
             }}
-            liveRunSlot={<LiveRunWidget issueId={issueId!} companyId={issue.companyId} />}
+            liveRunSlot={<IssueLiveSessionPanel issueId={issueId!} companyId={issue.companyId} />}
             composerStatusSlot={pendingComposerStatus ? (
               <div
                 className={cn(
