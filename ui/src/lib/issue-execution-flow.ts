@@ -111,25 +111,25 @@ const STAGES: StageDefinition[] = [
 ];
 
 const FIELD_PATTERNS = {
-  nextStep: /^- Следующий шаг: (.+)$/m,
-  verifyStatus: /^- Проверка: `([^`]+)`$/m,
-  evidenceUrl: /^- Evidence: (.+)$/m,
-  currentState: /^- Состояние проверки: (.+)$/m,
-  outcomeClass: /^- Outcome class: `([^`]+)`$/m,
-  scenarioClass: /^- Класс сценария: `([^`]+)`$/m,
-  scenarioStatus: /^- Статус сценария: `([^`]+)`$/m,
-  scenarioFailedStep: /^- Шаг проверки: `([^`]+)`$/m,
-  turnLabel: /^- Turn: `([^`]+)`$/m,
-  executionState: /^- Execution state: `([^`]+)`$/m,
-  attachmentState: /^- Attachment state: `([^`]+)`$/m,
-  failureClass: /^- Failure class: `([^`]+)`$/m,
-  retryCount: /^- Retry count: `([^`]+)`$/m,
-  artifactCount: /^- Artifact count: `([^`]+)`$/m,
-  slotEnv: /^- Slot env: `([^`]+)`$/m,
-  slotBranch: /^- Slot branch: `([^`]+)`$/m,
-  slotStatus: /^- Slot status: `([^`]+)`$/m,
-  standUrl: /^- Открыть стенд: (.+)$/m,
-  updatedAt: /^- Projection updated: `([^`]+)`$/m,
+  nextStep: /^[*-] Следующий шаг: (.+)$/m,
+  verifyStatus: /^[*-] Проверка: `([^`]+)`$/m,
+  evidenceUrl: /^[*-] Evidence: (.+)$/m,
+  currentState: /^[*-] Состояние проверки: (.+)$/m,
+  outcomeClass: /^[*-] Outcome class: `([^`]+)`$/m,
+  scenarioClass: /^[*-] Класс сценария: `([^`]+)`$/m,
+  scenarioStatus: /^[*-] Статус сценария: `([^`]+)`$/m,
+  scenarioFailedStep: /^[*-] Шаг проверки: `([^`]+)`$/m,
+  turnLabel: /^[*-] Turn: `([^`]+)`$/m,
+  executionState: /^[*-] Execution state: `([^`]+)`$/m,
+  attachmentState: /^[*-] Attachment state: `([^`]+)`$/m,
+  failureClass: /^[*-] Failure class: `([^`]+)`$/m,
+  retryCount: /^[*-] Retry count: `([^`]+)`$/m,
+  artifactCount: /^[*-] Artifact count: `([^`]+)`$/m,
+  slotEnv: /^[*-] Slot env: `([^`]+)`$/m,
+  slotBranch: /^[*-] Slot branch: `([^`]+)`$/m,
+  slotStatus: /^[*-] Slot status: `([^`]+)`$/m,
+  standUrl: /^[*-] Открыть стенд: (.+)$/m,
+  updatedAt: /^[*-] Projection updated: `([^`]+)`$/m,
 };
 
 const STAGE_KEYS = new Set(STAGES.map((stage) => stage.key));
@@ -154,12 +154,12 @@ function parseTurnNumber(turnLabel: string | null): number | null {
 }
 
 function parseRecentMilestones(body: string): ParsedExecutionMilestone[] {
-  const sectionMatch = /## Последние этапы\s+([\s\S]*?)(?=\n## |\s*$)/m.exec(body);
+  const sectionMatch = /(?:^|\n)## (?:Последние этапы|Как шёл turn)\s+([\s\S]*?)(?=\n## |$)/.exec(body);
   if (!sectionMatch) return [];
   const lines = sectionMatch[1].split("\n").map((line) => line.trim()).filter(Boolean);
   const milestones: ParsedExecutionMilestone[] = [];
   for (const line of lines) {
-    const match = /^- \*\*(.+?)\*\* — (.+?): (.+?)(?: \((.+)\))?$/.exec(line);
+    const match = /^[*-] \*\*(.+?)\*\* — (.+?): (.+?)(?: \((.+)\))?$/.exec(line);
     if (!match) continue;
     milestones.push({
       role: match[1].trim(),
@@ -173,7 +173,7 @@ function parseRecentMilestones(body: string): ParsedExecutionMilestone[] {
 
 function parseSectionBody(body: string, title: string): string | null {
   const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^## ${escapedTitle}\\s+([\\s\\S]*?)(?=\\n## |\\s*$)`, "m").exec(body);
+  const match = new RegExp(`(?:^|\\n)## ${escapedTitle}\\s+([\\s\\S]*?)(?=\\n## |$)`).exec(body);
   return match?.[1]?.trim() || null;
 }
 
@@ -183,13 +183,13 @@ function parseMeasuredObservations(body: string): string[] {
   return sectionBody
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
+    .filter((line) => line.startsWith("- ") || line.startsWith("* "))
     .map((line) => line.slice(2).trim())
     .filter((line) => line.length > 0 && !line.includes("verifier пока не вернул измеримые наблюдения"));
 }
 
 function parseHeadlineAndSummary(body: string): Pick<ParsedExecutionDocument, "headline" | "summary"> {
-  const match = /^# (?:Итог|Сводка) выполнения Atlas\s+([\s\S]*?)(?=\n## |\s*$)/m.exec(body);
+  const match = /^# (?:Итог|Сводка) выполнения Atlas\s+([\s\S]*?)(?=\n## |$)/.exec(body);
   if (!match) return { headline: null, summary: null };
   const lines = match[1]
     .split("\n")

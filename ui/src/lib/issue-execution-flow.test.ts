@@ -185,3 +185,42 @@ describe("buildPendingAtlasFollowupStatus", () => {
     expect(status.detail).toContain("Attachment state: unattached");
   });
 });
+
+describe("parseExecutionDocument", () => {
+  it("parses star-bullet atlas execution documents and legacy milestone headings", () => {
+    const parsed = parseExecutionDocument(makeExecutionDocument(`# Итог выполнения Atlas
+
+Подтверждено: сценарий «Project layouts surface regression» прошёл.
+
+## Текущее состояние
+
+* Задача: TURN 1
+* Состояние проверки: Все обязательные критерии подтверждены., TURN 1 завершился зелёной проверкой, evidence уже опубликован.
+* Статус сценария: \`passed\`
+* Turn: \`TURN 1\`
+* Следующий шаг: Открой стенд и проверь UI вручную.
+
+## Наблюдения verifier
+
+* Класс сценария: project_layouts_surface
+* Сценарий: Project layouts surface regression
+
+## Что делать дальше
+
+* Evidence: https://atlas.homio.pro/app/output/example.png
+
+## Как шёл turn
+
+* **Atlas Executor** — TURN 1 взят в работу: Исполнение уже началось. (2026-04-17 10:08:34)
+* **Technical Verifier** — Проверка пройдена: Подтверждено: сценарий «Project layouts surface regression» прошёл. (2026-04-17 10:16:23)`));
+
+    expect(parsed.currentState).toContain("Все обязательные критерии подтверждены");
+    expect(parsed.nextStep).toContain("Открой стенд");
+    expect(parsed.scenarioStatus).toBe("passed");
+    expect(parsed.turnLabel).toBe("TURN 1");
+    expect(parsed.evidenceUrl).toContain("/app/output/example.png");
+    expect(parsed.measuredObservations).toContain("Класс сценария: project_layouts_surface");
+    expect(parsed.recentMilestones).toHaveLength(2);
+    expect(parsed.recentMilestones[0]?.role).toBe("Atlas Executor");
+  });
+});
