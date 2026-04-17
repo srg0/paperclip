@@ -26,12 +26,23 @@ export interface AtlasExecutionNarrativeFallback {
   updatedAt?: string | null;
   turnLabel?: string | null;
   turnNumber?: number | null;
+  latestRequest?: string | null;
+  pendingRequests?: string[] | null;
   standUrl?: string | null;
   evidenceUrl?: string | null;
   executorSummary?: string | null;
   verifierScope?: string | null;
   verificationLimitations?: string[] | null;
   projectionWarning?: string | null;
+  turnHistory?: Array<{
+    sequence: number;
+    request: string | null;
+    status: "running" | "settled";
+    verifierScope: string | null;
+    outcome: string | null;
+    startedAt: string | null;
+    settledAt: string | null;
+  }> | null;
   measuredObservations?: string[] | null;
   recentMilestones?: Array<{
     role: string;
@@ -337,6 +348,10 @@ export function buildAtlasExecutionNarrativeSummary(
   const limitationLine = (fallback?.verificationLimitations ?? [])[0]
     ? `Осталось проверить: ${(fallback?.verificationLimitations ?? [])[0]}`
     : null;
+  const latestRequestLine = fallback?.latestRequest ? `Последний исполненный запрос: ${fallback.latestRequest}` : null;
+  const pendingRequestLine = (fallback?.pendingRequests ?? [])[0]
+    ? `Есть более свежий user comment: ${(fallback?.pendingRequests ?? [])[0]}`
+    : null;
   let previousTimestamp: string | null = null;
   const timeline = (fallback?.recentMilestones ?? [])
     .filter((entry) => Boolean(entry?.title))
@@ -352,23 +367,33 @@ export function buildAtlasExecutionNarrativeSummary(
     })
     .slice(-5);
   const current =
-    timeline[timeline.length - 1]
-    ?? {
-      ts: resolveStableTimelineTimestamp(null, fallback?.updatedAt, previousTimestamp),
-      title: streaming ? "Atlas execution started" : "Atlas execution summary",
-      detail: compactWhitespace(
-        implementationLine
-          ?? verifierLine
-          ?? limitationLine
-          ?? fallback?.currentState
-          ?? fallback?.summary
-          ?? (fallback?.measuredObservations ?? [])[0]
-          ?? "Bridge did not expose a readable Atlas update yet.",
-      ),
-      tone: toneFromVerifyStatus(fallback?.verifyStatus, streaming),
-    };
+    fallback?.projectionWarning
+      ? {
+        ts: resolveStableTimelineTimestamp(null, fallback?.updatedAt, previousTimestamp),
+        title: "Projection needs attention",
+        detail: fallback.projectionWarning,
+        tone: "warn" as const,
+      }
+      : timeline[timeline.length - 1]
+        ?? {
+          ts: resolveStableTimelineTimestamp(null, fallback?.updatedAt, previousTimestamp),
+          title: streaming ? "Atlas execution started" : "Atlas execution summary",
+          detail: compactWhitespace(
+            implementationLine
+              ?? verifierLine
+              ?? limitationLine
+              ?? latestRequestLine
+              ?? fallback?.currentState
+              ?? fallback?.summary
+              ?? (fallback?.measuredObservations ?? [])[0]
+              ?? "Bridge did not expose a readable Atlas update yet.",
+          ),
+          tone: toneFromVerifyStatus(fallback?.verifyStatus, streaming),
+        };
   const statusLine = compactWhitespace(
     [
+      latestRequestLine,
+      pendingRequestLine,
       fallback?.currentState,
       fallback?.summary,
       implementationLine,

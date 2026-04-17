@@ -53,9 +53,31 @@ describe("IssueLiveSessionPanel", () => {
             turnLabel: "TURN 2",
             currentState: "Execution завершен и готов к review.",
             summary: "VerifyReport зеленый, evidence опубликован.",
+            latestRequest: "Добавь double tap activation.",
             executorSummary: "Добавил double tap activation.",
             verifierScope: "Project media surface regression",
             verificationLimitations: ["Нужна ручная проверка double tap."],
+            pendingRequests: ["норм делай mr"],
+            turnHistory: [
+              {
+                sequence: 1,
+                request: "Первичная fullscreen gallery",
+                status: "settled",
+                verifierScope: "Project media surface regression",
+                outcome: "Итог готов для проверки человеком",
+                startedAt: "2026-04-17T09:58:00.000Z",
+                settledAt: "2026-04-17T10:06:00.000Z",
+              },
+              {
+                sequence: 2,
+                request: "Добавь double tap activation.",
+                status: "settled",
+                verifierScope: "Project media surface regression",
+                outcome: "Итог готов для проверки человеком",
+                startedAt: "2026-04-17T10:08:00.000Z",
+                settledAt: "2026-04-17T10:18:00.000Z",
+              },
+            ],
             verifyStatus: "passed",
             evidenceUrl: "https://atlas.homio.pro/app/output/example.png",
             rawBody: "# Сводка выполнения Atlas\n\nTURN 2 raw body",
@@ -70,10 +92,16 @@ describe("IssueLiveSessionPanel", () => {
     expect(container.textContent).toContain("Atlas execution");
     expect(container.textContent).toContain("Projected turn");
     expect(container.textContent).toContain("TURN 2");
+    expect(container.textContent).toContain("Latest executed request");
+    expect(container.textContent).toContain("Turn history");
+    expect(container.textContent).toContain("TURN 1");
+    expect(container.textContent).toContain("TURN 2");
     expect(container.textContent).toContain("Executor said");
     expect(container.textContent).toContain("Добавил double tap activation.");
     expect(container.textContent).toContain("Still missing");
     expect(container.textContent).toContain("Нужна ручная проверка double tap.");
+    expect(container.textContent).toContain("Newer user comments");
+    expect(container.textContent).toContain("норм делай mr");
 
     act(() => {
       root.unmount();

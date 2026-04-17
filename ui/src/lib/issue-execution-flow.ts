@@ -84,6 +84,7 @@ export interface IssueExecutionHeaderModel {
   mismatchText: string | null;
   headline: string | null;
   summary: string | null;
+  requestedChange: string | null;
   implementationClaim: string | null;
   verifierScope: string | null;
   remainingGap: string | null;
@@ -222,15 +223,27 @@ function parseVerifierScope(body: string): string | null {
 
 function parseVerificationLimitations(body: string): string[] {
   const sectionBody = parseSectionBody(body, "Изменения и diff");
-  if (!sectionBody) return [];
-  const lines = sectionBody
+  if (sectionBody) {
+    const lines = sectionBody
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const startIndex = lines.findIndex((line) => /^Ограничения проверки:?$/i.test(line));
+    if (startIndex !== -1) {
+      const limitations = lines
+        .slice(startIndex + 1)
+        .filter((line) => line.startsWith("- ") || line.startsWith("* "))
+        .map((line) => line.slice(2).trim())
+        .filter((line) => line.length > 0);
+      if (limitations.length > 0) return limitations;
+    }
+  }
+
+  const unconfirmedBody = parseSectionBody(body, "Не подтверждено");
+  if (!unconfirmedBody) return [];
+  return unconfirmedBody
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean);
-  const startIndex = lines.findIndex((line) => /^Ограничения проверки:?$/i.test(line));
-  if (startIndex === -1) return [];
-  return lines
-    .slice(startIndex + 1)
     .filter((line) => line.startsWith("- ") || line.startsWith("* "))
     .map((line) => line.slice(2).trim())
     .filter((line) => line.length > 0);
@@ -682,6 +695,7 @@ export function buildIssueExecutionHeaderModel(input: {
     mismatchText: flow.mismatchText,
     headline: parsed.headline,
     summary: buildImplementationAwareSummary(parsed) ?? parsed.summary ?? parsed.currentState ?? parsed.measuredObservations[0] ?? null,
+    requestedChange: null,
     implementationClaim: parsed.executorSummary,
     verifierScope: parsed.verifierScope,
     remainingGap: parsed.verificationLimitations[0] ?? null,

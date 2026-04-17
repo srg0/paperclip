@@ -7,6 +7,7 @@ describe("buildAtlasExecutionNarrativeSummary", () => {
       {
         currentState: "Execution завершен и готов к review.",
         summary: "VerifyReport зеленый, evidence опубликован.",
+        latestRequest: "Добавь активацию по двойному тапу",
         executorSummary: "Добавил fullscreen controls и zoom-поведение.",
         verifierScope: "Project media surface regression",
         verificationLimitations: ["Нужна ручная проверка в UI для жестов и double tap."],
@@ -33,6 +34,7 @@ describe("buildAtlasExecutionNarrativeSummary", () => {
     expect(summary.current?.detail).toContain("Technical Verifier");
     expect(summary.timeline).toHaveLength(2);
     expect(summary.statusLine).toContain("Execution завершен");
+    expect(summary.statusLine).toContain("Последний исполненный запрос");
     expect(summary.statusLine).toContain("Исполнитель заявил");
     expect(summary.statusLine).toContain("Verifier подтвердил");
     expect(summary.statusLine).toContain("double tap");

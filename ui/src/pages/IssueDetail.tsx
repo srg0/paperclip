@@ -35,6 +35,7 @@ import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
 import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
+import { buildIssueExecutionCommentContext } from "../lib/issue-execution-turns";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
@@ -315,21 +316,31 @@ export function IssueDetail() {
     () => parseExecutionDocument(executionDocument),
     [executionDocument],
   );
+  const executionCommentContext = useMemo(() => {
+    if (!issue) return null;
+    return buildIssueExecutionCommentContext({
+      issue,
+      comments: comments ?? [],
+      projectedTurnNumber: parsedExecutionDocument.turnNumber,
+    });
+  }, [comments, issue, parsedExecutionDocument.turnNumber]);
   const atlasExecutionPanelModel = useMemo(() => {
-    if (!issue) return parsedExecutionDocument;
-    const expectedTurnNumber = issue.requestDepth > 0 ? issue.requestDepth + 1 : 1;
-    const projectedTurnNumber = parsedExecutionDocument.turnNumber;
-    const projectionWarning = issue.requestDepth > 0 && (
-      projectedTurnNumber === null
-      || projectedTurnNumber < expectedTurnNumber
-    )
-      ? `У issue уже есть ${issue.requestDepth} follow-up ${issue.requestDepth === 1 ? "request" : "requests"}, но текущая Atlas projection всё ещё показывает ${parsedExecutionDocument.turnLabel ?? "turn не указан"}.`
-      : null;
     return {
       ...parsedExecutionDocument,
-      projectionWarning,
+      latestRequest: executionCommentContext?.latestExecutedTurn?.request ?? null,
+      pendingRequests: executionCommentContext?.pendingUserRequests ?? [],
+      turnHistory: executionCommentContext?.turns.map((turn) => ({
+        sequence: turn.sequence,
+        request: turn.request,
+        status: turn.status,
+        verifierScope: turn.verifierScope,
+        outcome: turn.outcome,
+        startedAt: turn.startedAt,
+        settledAt: turn.settledAt,
+      })) ?? [],
+      projectionWarning: executionCommentContext?.projectionWarning ?? null,
     };
-  }, [issue, parsedExecutionDocument]);
+  }, [executionCommentContext, parsedExecutionDocument]);
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
@@ -561,7 +572,7 @@ export function IssueDetail() {
 
   const executionHeaderModel = useMemo(() => {
     if (!issue) return null;
-    return buildIssueExecutionHeaderModel({
+    const baseModel = buildIssueExecutionHeaderModel({
       issue,
       executionDocument,
       linkedRuns: linkedRuns ?? [],
@@ -570,7 +581,26 @@ export function IssueDetail() {
       activity: activity ?? [],
       agents: agents ?? [],
     });
-  }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents]);
+    const latestExecutedTurn = executionCommentContext?.latestExecutedTurn ?? null;
+    const latestRequest = latestExecutedTurn?.request ?? null;
+    const pendingRequests = executionCommentContext?.pendingUserRequests ?? [];
+    const summaryParts = [
+      latestRequest ? `Последний исполненный запрос: «${latestRequest}».` : null,
+      baseModel.summary,
+      pendingRequests.length > 0
+        ? `После этого появились новые user comments (${pendingRequests.length}), поэтому текущая projection уже не отвечает на самый свежий запрос.`
+        : null,
+    ].filter(Boolean);
+    return {
+      ...baseModel,
+      requestedChange: latestRequest,
+      summary: summaryParts.join(" "),
+      turnLabel: latestExecutedTurn ? `Turn ${latestExecutedTurn.sequence}` : baseModel.turnLabel,
+      flowStatus: executionCommentContext?.projectionWarning ? "Projection stale" : baseModel.flowStatus,
+      flowSeverity: executionCommentContext?.projectionWarning ? "warning" : baseModel.flowSeverity,
+      mismatchText: executionCommentContext?.projectionWarning ?? baseModel.mismatchText,
+    };
+  }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents, executionCommentContext]);
   const pendingComposerStatus = useMemo(() => {
     if (!pendingAtlasFollowup) return null;
     return buildPendingAtlasFollowupStatus({

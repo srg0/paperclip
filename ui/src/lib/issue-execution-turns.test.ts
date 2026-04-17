@@ -1,0 +1,111 @@
+// @vitest-environment node
+
+import { describe, expect, it } from "vitest";
+import type { Issue, IssueComment } from "@paperclipai/shared";
+import { buildIssueExecutionCommentContext } from "./issue-execution-turns";
+
+function makeIssue(overrides: Partial<Issue> = {}): Issue {
+  return {
+    id: "issue-1",
+    companyId: "company-1",
+    projectId: null,
+    projectWorkspaceId: null,
+    goalId: null,
+    parentId: null,
+    title: "Fullscreen gallery improvements",
+    description: "Сделай fullscreen gallery удобной для телефона и компьютера.",
+    status: "in_review",
+    priority: "medium",
+    assigneeAgentId: null,
+    assigneeUserId: null,
+    createdByAgentId: null,
+    createdByUserId: null,
+    issueNumber: 1,
+    identifier: "HOM-638",
+    requestDepth: 0,
+    billingCode: null,
+    assigneeAdapterOverrides: null,
+    executionWorkspaceId: null,
+    executionWorkspacePreference: null,
+    executionWorkspaceSettings: null,
+    checkoutRunId: null,
+    executionRunId: null,
+    executionAgentNameKey: null,
+    executionLockedAt: null,
+    startedAt: null,
+    completedAt: null,
+    cancelledAt: null,
+    hiddenAt: null,
+    createdAt: new Date("2026-04-16T12:00:00.000Z"),
+    updatedAt: new Date("2026-04-17T15:08:27.380Z"),
+    labels: [],
+    labelIds: [],
+    myLastTouchAt: null,
+    lastExternalCommentAt: null,
+    isUnreadForMe: false,
+    ...overrides,
+  };
+}
+
+function makeComment(body: string, createdAt: string, user = false): IssueComment {
+  return {
+    id: createdAt,
+    companyId: "company-1",
+    issueId: "issue-1",
+    authorAgentId: user ? null : "agent-1",
+    authorUserId: user ? "user-1" : null,
+    body,
+    createdAt: new Date(createdAt),
+    updatedAt: new Date(createdAt),
+  };
+}
+
+describe("buildIssueExecutionCommentContext", () => {
+  it("derives executed turns from comment history and flags newer user comments after the last execution", () => {
+    const context = buildIssueExecutionCommentContext({
+      issue: makeIssue(),
+      projectedTurnNumber: 1,
+      comments: [
+        makeComment("Добавь активацию по двойному тапу", "2026-04-16T13:47:28.574Z", true),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Delivery Orchestrator -->
+### Delivery Orchestrator
+
+**Запрос принят**
+
+Задачу разобрал и передаю ее в Atlas на execution.`, "2026-04-17T12:29:47.523Z"),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Atlas Executor -->
+### Atlas Executor
+
+**Execution запущен**
+
+Atlas принял turn и поднимает workspace для этой задачи.`, "2026-04-17T12:29:55.174Z"),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Technical Verifier -->
+### Technical Verifier
+
+**Проверка пройдена**
+
+- Что проверено: Подтверждено: сценарий «Project media surface regression» прошёл.
+- Стенд: https://ai01.homio.pro
+- Evidence: https://atlas.homio.pro/app/output/example.png`, "2026-04-17T12:39:30.635Z"),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Reporter -->
+### Reporter
+
+**Итог готов для проверки человеком**
+
+**Коротко:** Все ожидаемые изменения доступны на стенде и готовы к human review.`, "2026-04-17T12:39:35.455Z"),
+        makeComment("Добавил активацию по двойному тапу?", "2026-04-17T13:42:59.532Z", true),
+        makeComment("норм делай mr", "2026-04-17T15:08:22.950Z", true),
+      ],
+    });
+
+    expect(context.turns).toHaveLength(2);
+    expect(context.latestExecutedTurn?.sequence).toBe(2);
+    expect(context.latestExecutedTurn?.request).toBe("Добавь активацию по двойному тапу");
+    expect(context.latestExecutedTurn?.verifierScope).toContain("Project media surface regression");
+    expect(context.pendingUserRequests).toEqual([
+      "Добавил активацию по двойному тапу?",
+      "норм делай mr",
+    ]);
+    expect(context.projectionWarning).toContain("новые user comments");
+  });
+});
