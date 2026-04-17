@@ -24,6 +24,9 @@ export interface AtlasExecutionNarrativeFallback {
   updatedAt?: string | null;
   standUrl?: string | null;
   evidenceUrl?: string | null;
+  executorSummary?: string | null;
+  verifierScope?: string | null;
+  verificationLimitations?: string[] | null;
   measuredObservations?: string[] | null;
   recentMilestones?: Array<{
     role: string;
@@ -324,6 +327,11 @@ export function buildAtlasExecutionNarrativeSummary(
   fallback: AtlasExecutionNarrativeFallback | null | undefined,
   streaming: boolean,
 ): NarrativeSummary {
+  const implementationLine = fallback?.executorSummary ? `Исполнитель заявил: ${fallback.executorSummary}` : null;
+  const verifierLine = fallback?.verifierScope ? `Verifier подтвердил: ${fallback.verifierScope}` : null;
+  const limitationLine = (fallback?.verificationLimitations ?? [])[0]
+    ? `Осталось проверить: ${(fallback?.verificationLimitations ?? [])[0]}`
+    : null;
   let previousTimestamp: string | null = null;
   const timeline = (fallback?.recentMilestones ?? [])
     .filter((entry) => Boolean(entry?.title))
@@ -344,7 +352,10 @@ export function buildAtlasExecutionNarrativeSummary(
       ts: resolveStableTimelineTimestamp(null, fallback?.updatedAt, previousTimestamp),
       title: streaming ? "Atlas execution started" : "Atlas execution summary",
       detail: compactWhitespace(
-        fallback?.currentState
+        implementationLine
+          ?? verifierLine
+          ?? limitationLine
+          ?? fallback?.currentState
           ?? fallback?.summary
           ?? (fallback?.measuredObservations ?? [])[0]
           ?? "Bridge did not expose a readable Atlas update yet.",
@@ -355,6 +366,9 @@ export function buildAtlasExecutionNarrativeSummary(
     [
       fallback?.currentState,
       fallback?.summary,
+      implementationLine,
+      verifierLine,
+      limitationLine,
       (fallback?.measuredObservations ?? [])[0],
       fallback?.standUrl ? `Stand: ${fallback.standUrl}` : null,
       fallback?.evidenceUrl ? `Evidence: ${fallback.evidenceUrl}` : null,

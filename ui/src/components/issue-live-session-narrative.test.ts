@@ -7,6 +7,9 @@ describe("buildAtlasExecutionNarrativeSummary", () => {
       {
         currentState: "Execution завершен и готов к review.",
         summary: "VerifyReport зеленый, evidence опубликован.",
+        executorSummary: "Добавил fullscreen controls и zoom-поведение.",
+        verifierScope: "Project media surface regression",
+        verificationLimitations: ["Нужна ручная проверка в UI для жестов и double tap."],
         standUrl: "https://ai03.homio.pro",
         recentMilestones: [
           {
@@ -30,6 +33,9 @@ describe("buildAtlasExecutionNarrativeSummary", () => {
     expect(summary.current?.detail).toContain("Technical Verifier");
     expect(summary.timeline).toHaveLength(2);
     expect(summary.statusLine).toContain("Execution завершен");
+    expect(summary.statusLine).toContain("Исполнитель заявил");
+    expect(summary.statusLine).toContain("Verifier подтвердил");
+    expect(summary.statusLine).toContain("double tap");
     expect(summary.statusLine).toContain("Stand: https://ai03.homio.pro");
   });
 

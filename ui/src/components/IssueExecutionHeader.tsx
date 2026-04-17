@@ -323,6 +323,19 @@ export function IssueExecutionHeader({
                 </div>
               </div>
 
+              {model.implementationClaim || model.verifierScope || model.remainingGap ? (
+                <div className="rounded-xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Claim vs proof
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    {model.implementationClaim ? summaryChip("Executor said", model.implementationClaim) : null}
+                    {model.verifierScope ? summaryChip("Verifier scope", model.verifierScope) : null}
+                    {model.remainingGap ? summaryChip("Still missing", model.remainingGap, "warning") : null}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="rounded-xl border border-border/70 bg-background/60 p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   Recent milestones

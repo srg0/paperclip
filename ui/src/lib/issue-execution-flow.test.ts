@@ -209,6 +209,14 @@ describe("parseExecutionDocument", () => {
 
 * Evidence: https://atlas.homio.pro/app/output/example.png
 
+## Изменения и diff
+
+* Исполнитель зафиксировал: Сделал точечное улучшение fullscreen-галереи.
+
+Ограничения проверки:
+
+* Нужна ручная проверка в UI для жестов и double tap.
+
 ## Как шёл turn
 
 * **Atlas Executor** — TURN 1 взят в работу: Исполнение уже началось. (2026-04-17 10:08:34)
@@ -219,6 +227,9 @@ describe("parseExecutionDocument", () => {
     expect(parsed.scenarioStatus).toBe("passed");
     expect(parsed.turnLabel).toBe("TURN 1");
     expect(parsed.evidenceUrl).toContain("/app/output/example.png");
+    expect(parsed.executorSummary).toContain("fullscreen");
+    expect(parsed.verifierScope).toBe("Project layouts surface regression");
+    expect(parsed.verificationLimitations[0]).toContain("double tap");
     expect(parsed.measuredObservations).toContain("Класс сценария: project_layouts_surface");
     expect(parsed.recentMilestones).toHaveLength(2);
     expect(parsed.recentMilestones[0]?.role).toBe("Atlas Executor");

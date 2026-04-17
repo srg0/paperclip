@@ -37,6 +37,9 @@ export interface ParsedExecutionDocument {
   nextStep: string | null;
   standUrl: string | null;
   evidenceUrl: string | null;
+  executorSummary: string | null;
+  verifierScope: string | null;
+  verificationLimitations: string[];
   verifyStatus: string | null;
   outcomeClass: string | null;
   scenarioClass: string | null;
@@ -80,6 +83,9 @@ export interface IssueExecutionHeaderModel {
   mismatchText: string | null;
   headline: string | null;
   summary: string | null;
+  implementationClaim: string | null;
+  verifierScope: string | null;
+  remainingGap: string | null;
   nextStep: string | null;
   stages: IssueExecutionHeaderStage[];
   milestones: ParsedExecutionMilestone[];
@@ -188,6 +194,32 @@ function parseMeasuredObservations(body: string): string[] {
     .filter((line) => line.length > 0 && !line.includes("verifier пока не вернул измеримые наблюдения"));
 }
 
+function parseExecutorSummary(body: string): string | null {
+  return parseField(/^[*-] Исполнитель зафиксировал: (.+)$/m, body);
+}
+
+function parseVerifierScope(body: string): string | null {
+  return parseField(/^[*-] Сценарий проверки: (.+)$/m, body)
+    ?? parseField(/^[*-] Проверено: (.+)$/m, body)
+    ?? parseField(/^[*-] Сценарий: (.+)$/m, body);
+}
+
+function parseVerificationLimitations(body: string): string[] {
+  const sectionBody = parseSectionBody(body, "Изменения и diff");
+  if (!sectionBody) return [];
+  const lines = sectionBody
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const startIndex = lines.findIndex((line) => /^Ограничения проверки:?$/i.test(line));
+  if (startIndex === -1) return [];
+  return lines
+    .slice(startIndex + 1)
+    .filter((line) => line.startsWith("- ") || line.startsWith("* "))
+    .map((line) => line.slice(2).trim())
+    .filter((line) => line.length > 0);
+}
+
 function parseHeadlineAndSummary(body: string): Pick<ParsedExecutionDocument, "headline" | "summary"> {
   const match = /^# (?:Итог|Сводка) выполнения Atlas\s+([\s\S]*?)(?=\n## |$)/.exec(body);
   if (!match) return { headline: null, summary: null };
@@ -212,6 +244,9 @@ export function parseExecutionDocument(document: IssueDocument | null | undefine
     nextStep: parseField(FIELD_PATTERNS.nextStep, body),
     standUrl: parseField(FIELD_PATTERNS.standUrl, body),
     evidenceUrl: parseField(FIELD_PATTERNS.evidenceUrl, body),
+    executorSummary: parseExecutorSummary(body),
+    verifierScope: parseVerifierScope(body),
+    verificationLimitations: parseVerificationLimitations(body),
     verifyStatus: parseField(FIELD_PATTERNS.verifyStatus, body),
     outcomeClass: parseField(FIELD_PATTERNS.outcomeClass, body),
     scenarioClass: parseField(FIELD_PATTERNS.scenarioClass, body),
@@ -236,6 +271,15 @@ export function parseExecutionDocument(document: IssueDocument | null | undefine
     measuredObservations: parseMeasuredObservations(body),
     recentMilestones: parseRecentMilestones(body),
   };
+}
+
+function buildImplementationAwareSummary(parsed: ParsedExecutionDocument): string | null {
+  const parts = [
+    parsed.executorSummary ? `Исполнитель заявил: ${parsed.executorSummary}` : null,
+    parsed.verifierScope ? `Verifier подтвердил: ${parsed.verifierScope}` : null,
+    parsed.verificationLimitations[0] ? `Осталось вручную проверить: ${parsed.verificationLimitations[0]}` : null,
+  ].filter((value): value is string => Boolean(value));
+  return parts.length > 0 ? parts.join(" ") : null;
 }
 
 export function buildPendingAtlasFollowupStatus(input: {
@@ -620,7 +664,10 @@ export function buildIssueExecutionHeaderModel(input: {
     retryLabel: retryCount > 0 ? `Retry ${retryCount}` : "Retry 0",
     mismatchText: flow.mismatchText,
     headline: parsed.headline,
-    summary: parsed.summary ?? parsed.currentState ?? parsed.measuredObservations[0] ?? null,
+    summary: buildImplementationAwareSummary(parsed) ?? parsed.summary ?? parsed.currentState ?? parsed.measuredObservations[0] ?? null,
+    implementationClaim: parsed.executorSummary,
+    verifierScope: parsed.verifierScope,
+    remainingGap: parsed.verificationLimitations[0] ?? null,
     nextStep: parsed.nextStep,
     stages,
     milestones: parsed.recentMilestones,
