@@ -171,7 +171,7 @@ export function buildIssueExecutionCommentContext(
     const parsed = parseBridgeComment(comment.body);
     if (!parsed) continue;
 
-    if (isTurnStartRole(parsed.role) && currentTurn.events.length > 0) {
+    if (isTurnStartRole(parsed.role) && currentTurn.events.length > 0 && pendingUserRequests.length > 0) {
       currentTurn.status = currentTurn.settledAt ? "settled" : currentTurn.status;
       const nextRequest = pendingUserRequests.shift() ?? null;
       currentTurn = makeTurn(turns.length + 1, nextRequest);
