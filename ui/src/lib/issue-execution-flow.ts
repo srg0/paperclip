@@ -33,10 +33,15 @@ export interface IssueExecutionHeaderStage {
 export interface ParsedExecutionDocument {
   headline: string | null;
   summary: string | null;
+  currentState: string | null;
   nextStep: string | null;
   standUrl: string | null;
   evidenceUrl: string | null;
   verifyStatus: string | null;
+  outcomeClass: string | null;
+  scenarioClass: string | null;
+  scenarioStatus: string | null;
+  scenarioFailedStep: string | null;
   turnLabel: string | null;
   turnNumber: number | null;
   executionState: string | null;
@@ -48,6 +53,7 @@ export interface ParsedExecutionDocument {
   slotBranch: string | null;
   slotStatus: string | null;
   updatedAt: string | null;
+  measuredObservations: string[];
   recentMilestones: ParsedExecutionMilestone[];
 }
 
@@ -108,6 +114,11 @@ const FIELD_PATTERNS = {
   nextStep: /^- Следующий шаг: (.+)$/m,
   verifyStatus: /^- Проверка: `([^`]+)`$/m,
   evidenceUrl: /^- Evidence: (.+)$/m,
+  currentState: /^- Состояние проверки: (.+)$/m,
+  outcomeClass: /^- Outcome class: `([^`]+)`$/m,
+  scenarioClass: /^- Класс сценария: `([^`]+)`$/m,
+  scenarioStatus: /^- Статус сценария: `([^`]+)`$/m,
+  scenarioFailedStep: /^- Шаг проверки: `([^`]+)`$/m,
   turnLabel: /^- Turn: `([^`]+)`$/m,
   executionState: /^- Execution state: `([^`]+)`$/m,
   attachmentState: /^- Attachment state: `([^`]+)`$/m,
@@ -160,12 +171,33 @@ function parseRecentMilestones(body: string): ParsedExecutionMilestone[] {
   return milestones;
 }
 
+function parseSectionBody(body: string, title: string): string | null {
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^## ${escapedTitle}\\s+([\\s\\S]*?)(?=\\n## |\\s*$)`, "m").exec(body);
+  return match?.[1]?.trim() || null;
+}
+
+function parseMeasuredObservations(body: string): string[] {
+  const sectionBody = parseSectionBody(body, "Наблюдения verifier");
+  if (!sectionBody) return [];
+  return sectionBody
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter((line) => line.length > 0 && !line.includes("verifier пока не вернул измеримые наблюдения"));
+}
+
 function parseHeadlineAndSummary(body: string): Pick<ParsedExecutionDocument, "headline" | "summary"> {
-  const lines = body.split("\n");
-  const headlineIndex = lines.findIndex((line) => line.trim() === "# Сводка выполнения Atlas");
-  if (headlineIndex === -1) return { headline: null, summary: null };
-  const headline = lines[headlineIndex + 2]?.trim() || null;
-  const summary = lines[headlineIndex + 4]?.trim() || null;
+  const match = /^# (?:Итог|Сводка) выполнения Atlas\s+([\s\S]*?)(?=\n## |\s*$)/m.exec(body);
+  if (!match) return { headline: null, summary: null };
+  const lines = match[1]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith("## "));
+  const headline = lines[0] || null;
+  const summary = lines[1] || null;
   return { headline, summary };
 }
 
@@ -176,10 +208,15 @@ export function parseExecutionDocument(document: IssueDocument | null | undefine
   return {
     headline,
     summary,
+    currentState: parseField(FIELD_PATTERNS.currentState, body),
     nextStep: parseField(FIELD_PATTERNS.nextStep, body),
     standUrl: parseField(FIELD_PATTERNS.standUrl, body),
     evidenceUrl: parseField(FIELD_PATTERNS.evidenceUrl, body),
     verifyStatus: parseField(FIELD_PATTERNS.verifyStatus, body),
+    outcomeClass: parseField(FIELD_PATTERNS.outcomeClass, body),
+    scenarioClass: parseField(FIELD_PATTERNS.scenarioClass, body),
+    scenarioStatus: parseField(FIELD_PATTERNS.scenarioStatus, body),
+    scenarioFailedStep: parseField(FIELD_PATTERNS.scenarioFailedStep, body),
     turnLabel,
     turnNumber: parseTurnNumber(turnLabel),
     executionState: parseField(FIELD_PATTERNS.executionState, body),
@@ -196,6 +233,7 @@ export function parseExecutionDocument(document: IssueDocument | null | undefine
     slotBranch: parseField(FIELD_PATTERNS.slotBranch, body),
     slotStatus: parseField(FIELD_PATTERNS.slotStatus, body),
     updatedAt: parseField(FIELD_PATTERNS.updatedAt, body),
+    measuredObservations: parseMeasuredObservations(body),
     recentMilestones: parseRecentMilestones(body),
   };
 }
@@ -315,7 +353,7 @@ function inferCurrentStage(input: {
   );
   const autoReviewBlocked = Boolean(
     parsed.verifyStatus === "passed"
-    && [parsed.headline, parsed.summary, parsed.nextStep]
+    && [parsed.headline, parsed.summary, parsed.currentState, parsed.nextStep]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -582,7 +620,7 @@ export function buildIssueExecutionHeaderModel(input: {
     retryLabel: retryCount > 0 ? `Retry ${retryCount}` : "Retry 0",
     mismatchText: flow.mismatchText,
     headline: parsed.headline,
-    summary: parsed.summary,
+    summary: parsed.summary ?? parsed.currentState ?? parsed.measuredObservations[0] ?? null,
     nextStep: parsed.nextStep,
     stages,
     milestones: parsed.recentMilestones,

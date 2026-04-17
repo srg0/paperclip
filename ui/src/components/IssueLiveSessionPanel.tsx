@@ -6,7 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
-import { buildNarrativeSummary, type NarrativeStep, type NarrativeTone } from "./issue-live-session-narrative";
+import {
+  buildAtlasExecutionNarrativeSummary,
+  buildNarrativeSummary,
+  type AtlasExecutionNarrativeFallback,
+  type NarrativeStep,
+  type NarrativeTone,
+} from "./issue-live-session-narrative";
 import { Identity } from "./Identity";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView, type TranscriptMode } from "./transcript/RunTranscriptView";
@@ -25,6 +31,7 @@ import {
 interface IssueLiveSessionPanelProps {
   issueId: string;
   companyId?: string | null;
+  atlasExecutionFallback?: AtlasExecutionNarrativeFallback | null;
 }
 
 type SessionViewMode = "narrative" | "stream";
@@ -225,7 +232,7 @@ function RunHeader({
   );
 }
 
-export function IssueLiveSessionPanel({ issueId, companyId }: IssueLiveSessionPanelProps) {
+export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallback }: IssueLiveSessionPanelProps) {
   const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<SessionViewMode>("narrative");
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
@@ -364,7 +371,9 @@ export function IssueLiveSessionPanel({ issueId, companyId }: IssueLiveSessionPa
             const isActive = isRunActive(run.status);
             const isSynthetic = isSyntheticAtlasRun(run);
             const transcript = transcriptByRun.get(run.id) ?? [];
-            const summary = buildNarrativeSummary(transcript, isActive);
+            const summary = isSynthetic && transcript.length === 0
+              ? buildAtlasExecutionNarrativeSummary(atlasExecutionFallback, isActive)
+              : buildNarrativeSummary(transcript, isActive);
 
             return (
               <section key={run.id} className="px-4 py-4">
@@ -408,7 +417,7 @@ export function IssueLiveSessionPanel({ issueId, companyId }: IssueLiveSessionPa
                     collapseStdout
                     emptyMessage={
                       isSynthetic
-                        ? "Waiting for Atlas execution updates in the issue summary..."
+                        ? "Raw transcript is not available for Atlas synthetic runs. Use Narrative for bridge milestones and execution summary."
                         : hasOutputForRun(run.id)
                           ? "Waiting for transcript parsing..."
                           : "Waiting for run output..."

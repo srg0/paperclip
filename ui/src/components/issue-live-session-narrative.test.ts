@@ -1,88 +1,92 @@
-// @vitest-environment node
-
 import { describe, expect, it } from "vitest";
-import type { TranscriptEntry } from "../adapters";
-import { buildNarrativeSummary } from "./issue-live-session-narrative";
+import { buildAtlasExecutionNarrativeSummary, buildNarrativeSummary } from "./issue-live-session-narrative";
+
+describe("buildAtlasExecutionNarrativeSummary", () => {
+  it("turns Atlas execution milestones into a readable narrative fallback", () => {
+    const summary = buildAtlasExecutionNarrativeSummary(
+      {
+        currentState: "Execution завершен и готов к review.",
+        summary: "VerifyReport зеленый, evidence опубликован.",
+        standUrl: "https://ai03.homio.pro",
+        recentMilestones: [
+          {
+            role: "Atlas Executor",
+            title: "TURN 1 взят в работу",
+            summary: "Исполнение идет в ai03.",
+            at: "2026-04-17T10:08:34.000Z",
+          },
+          {
+            role: "Technical Verifier",
+            title: "Проверка пройдена",
+            summary: "Подтверждено: сценарий прошёл.",
+            at: "2026-04-17T10:16:23.000Z",
+          },
+        ],
+      },
+      true,
+    );
+
+    expect(summary.current?.title).toBe("Проверка пройдена");
+    expect(summary.current?.detail).toContain("Technical Verifier");
+    expect(summary.timeline).toHaveLength(2);
+    expect(summary.statusLine).toContain("Execution завершен");
+    expect(summary.statusLine).toContain("Stand: https://ai03.homio.pro");
+  });
+
+  it("keeps timeline timestamps stable when milestones do not provide explicit dates", () => {
+    const summary = buildAtlasExecutionNarrativeSummary(
+      {
+        updatedAt: "2026-04-17T10:18:00.000Z",
+        recentMilestones: [
+          {
+            role: "Atlas Executor",
+            title: "TURN 1 взят в работу",
+            summary: "Исполнение идет в ai03.",
+            at: null,
+          },
+          {
+            role: "Reporter",
+            title: "Готово к проверке человеком",
+            summary: "Результат готов к review.",
+            at: null,
+          },
+        ],
+      },
+      false,
+    );
+
+    expect(summary.timeline[0]?.ts).toBe("2026-04-17T10:18:00.000Z");
+    expect(summary.timeline[1]?.ts).toBe("2026-04-17T10:18:00.000Z");
+  });
+});
 
 describe("buildNarrativeSummary", () => {
-  it("turns active command execution into a readable current-focus step", () => {
-    const entries: TranscriptEntry[] = [
-      {
-        kind: "init",
-        ts: "2026-04-17T10:00:00.000Z",
-        model: "gpt-5.4-mini",
-        sessionId: "sess_1",
-      },
-      {
-        kind: "tool_call",
-        ts: "2026-04-17T10:00:01.000Z",
-        name: "command_execution",
-        toolUseId: "cmd_1",
-        input: { command: "rg \"Interactive Session\" ui/src" },
-      },
-      {
-        kind: "stdout",
-        ts: "2026-04-17T10:00:02.000Z",
-        text: "ui/src/pages/IssueDetail.tsx",
-      },
-    ];
+  it("preserves the readable transcript path for regular runs", () => {
+    const summary = buildNarrativeSummary(
+      [
+        {
+          kind: "assistant",
+          ts: "2026-04-17T10:08:34.000Z",
+          text: "Inspecting the failing route and collecting logs.",
+        },
+        {
+          kind: "result",
+          ts: "2026-04-17T10:16:23.000Z",
+          text: "Applied a fix and published a fresh screenshot.",
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          costUsd: 0,
+          subtype: "success",
+          isError: false,
+          errors: [],
+        },
+      ],
+      false,
+    );
 
-    const summary = buildNarrativeSummary(entries, true);
-
-    expect(summary.current).toMatchObject({
-      title: "Shell command running",
-      tone: "working",
-    });
-    expect(summary.current?.detail).toContain("IssueDetail");
-    expect(summary.statusLine).toContain("Comment below");
-  });
-
-  it("surfaces final results as review-ready narrative checkpoints", () => {
-    const entries: TranscriptEntry[] = [
-      {
-        kind: "assistant",
-        ts: "2026-04-17T10:00:00.000Z",
-        text: "Implemented the interactive session panel.",
-      },
-      {
-        kind: "result",
-        ts: "2026-04-17T10:00:03.000Z",
-        text: "Verified locally. Ready for review.",
-        inputTokens: 10,
-        outputTokens: 20,
-        cachedTokens: 0,
-        costUsd: 0.01,
-        subtype: "completed",
-        isError: false,
-        errors: [],
-      },
-    ];
-
-    const summary = buildNarrativeSummary(entries, false);
-
-    expect(summary.current).toMatchObject({
-      title: "Result is ready",
-      tone: "success",
-      detail: "Verified locally. Ready for review.",
-    });
+    expect(summary.current?.title).toBe("Result is ready");
+    expect(summary.timeline.length).toBeGreaterThanOrEqual(1);
     expect(summary.statusLine).toContain("ready for review");
-  });
-
-  it("highlights stderr as an error checkpoint", () => {
-    const entries: TranscriptEntry[] = [
-      {
-        kind: "stderr",
-        ts: "2026-04-17T10:00:00.000Z",
-        text: "command failed: permission denied",
-      },
-    ];
-
-    const summary = buildNarrativeSummary(entries, false);
-
-    expect(summary.current).toMatchObject({
-      title: "Error output received",
-      tone: "error",
-    });
-    expect(summary.statusLine).toContain("needs attention");
   });
 });

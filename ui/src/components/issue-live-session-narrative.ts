@@ -16,6 +16,23 @@ export interface NarrativeSummary {
   statusLine: string;
 }
 
+export interface AtlasExecutionNarrativeFallback {
+  summary?: string | null;
+  currentState?: string | null;
+  nextStep?: string | null;
+  verifyStatus?: string | null;
+  updatedAt?: string | null;
+  standUrl?: string | null;
+  evidenceUrl?: string | null;
+  measuredObservations?: string[] | null;
+  recentMilestones?: Array<{
+    role: string;
+    title: string;
+    summary: string;
+    at: string | null;
+  }> | null;
+}
+
 type TranscriptBlock = ReturnType<typeof normalizeTranscript>[number];
 
 const TOOL_LABEL_OVERRIDES: Record<string, string> = {
@@ -277,6 +294,81 @@ function dedupeSteps(steps: NarrativeStep[]): NarrativeStep[] {
     deduped.push(step);
   }
   return deduped;
+}
+
+function toneFromVerifyStatus(value: string | null | undefined, streaming: boolean): NarrativeTone {
+  const status = compactWhitespace(value ?? "").toLowerCase();
+  if (status === "passed") return "success";
+  if (status === "failed" || status === "error") return "error";
+  return streaming ? "working" : "info";
+}
+
+function toneFromMilestone(role: string, title: string): NarrativeTone {
+  const haystack = `${role} ${title}`.toLowerCase();
+  if (haystack.includes("ошиб") || haystack.includes("failed") || haystack.includes("расхождение")) return "error";
+  if (haystack.includes("внимания") || haystack.includes("заблок") || haystack.includes("warning")) return "warn";
+  if (haystack.includes("готово") || haystack.includes("пройдена") || haystack.includes("доступен")) return "success";
+  if (haystack.includes("executor") || haystack.includes("взят в работу") || haystack.includes("запуска")) return "working";
+  return "info";
+}
+
+function resolveStableTimelineTimestamp(
+  timestamp: string | null | undefined,
+  fallbackUpdatedAt: string | null | undefined,
+  previousTimestamp: string | null,
+): string {
+  return timestamp ?? previousTimestamp ?? fallbackUpdatedAt ?? "1970-01-01T00:00:00.000Z";
+}
+
+export function buildAtlasExecutionNarrativeSummary(
+  fallback: AtlasExecutionNarrativeFallback | null | undefined,
+  streaming: boolean,
+): NarrativeSummary {
+  let previousTimestamp: string | null = null;
+  const timeline = (fallback?.recentMilestones ?? [])
+    .filter((entry) => Boolean(entry?.title))
+    .map((entry) => {
+      const ts = resolveStableTimelineTimestamp(entry.at, fallback?.updatedAt, previousTimestamp);
+      previousTimestamp = ts;
+      return {
+        ts,
+        title: entry.title,
+        detail: compactWhitespace([entry.role, entry.summary].filter(Boolean).join(": ")),
+        tone: toneFromMilestone(entry.role, entry.title),
+      };
+    })
+    .slice(-5);
+  const current =
+    timeline[timeline.length - 1]
+    ?? {
+      ts: resolveStableTimelineTimestamp(null, fallback?.updatedAt, previousTimestamp),
+      title: streaming ? "Atlas execution started" : "Atlas execution summary",
+      detail: compactWhitespace(
+        fallback?.currentState
+          ?? fallback?.summary
+          ?? (fallback?.measuredObservations ?? [])[0]
+          ?? "Bridge did not expose a readable Atlas update yet.",
+      ),
+      tone: toneFromVerifyStatus(fallback?.verifyStatus, streaming),
+    };
+  const statusLine = compactWhitespace(
+    [
+      fallback?.currentState,
+      fallback?.summary,
+      (fallback?.measuredObservations ?? [])[0],
+      fallback?.standUrl ? `Stand: ${fallback.standUrl}` : null,
+      fallback?.evidenceUrl ? `Evidence: ${fallback.evidenceUrl}` : null,
+      fallback?.nextStep,
+    ].filter(Boolean).join(" "),
+  ) || (streaming
+    ? "Atlas execution is live. Waiting for the next readable update."
+    : "Atlas execution summary is not available yet.");
+
+  return {
+    current,
+    timeline,
+    statusLine,
+  };
 }
 
 export function buildNarrativeSummary(entries: TranscriptEntry[], streaming: boolean): NarrativeSummary {

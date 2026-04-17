@@ -1380,7 +1380,13 @@ export function IssueDetail() {
             onAttachImage={async (file) => {
               await uploadAttachment.mutateAsync(file);
             }}
-            liveRunSlot={<IssueLiveSessionPanel issueId={issueId!} companyId={issue.companyId} />}
+            liveRunSlot={(
+              <IssueLiveSessionPanel
+                issueId={issueId!}
+                companyId={issue.companyId}
+                atlasExecutionFallback={parsedExecutionDocument}
+              />
+            )}
             composerStatusSlot={pendingComposerStatus ? (
               <div
                 className={cn(
