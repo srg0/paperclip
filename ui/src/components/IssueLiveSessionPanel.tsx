@@ -13,6 +13,7 @@ import {
   type NarrativeStep,
   type NarrativeTone,
 } from "./issue-live-session-narrative";
+import type { IssueNarrativeChatMessage } from "../lib/issue-execution-turns";
 import { Identity } from "./Identity";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView, type TranscriptMode } from "./transcript/RunTranscriptView";
@@ -32,6 +33,7 @@ interface IssueLiveSessionPanelProps {
   issueId: string;
   companyId?: string | null;
   atlasExecutionFallback?: AtlasExecutionNarrativeFallback | null;
+  chatMessages?: IssueNarrativeChatMessage[];
 }
 
 type SessionViewMode = "narrative" | "stream";
@@ -286,6 +288,56 @@ function AtlasTurnHistory({ fallback }: { fallback: AtlasExecutionNarrativeFallb
   );
 }
 
+function NarrativeChatFlow({ messages }: { messages: IssueNarrativeChatMessage[] }) {
+  return (
+    <div className="space-y-3">
+      {messages.map((message) => {
+        const isUser = message.speaker === "user";
+        const tone = toneStyles(message.tone);
+        return (
+          <div
+            key={message.id}
+            className={cn("flex", isUser ? "justify-end" : "justify-start")}
+          >
+            <div
+              className={cn(
+                "max-w-[85%] rounded-2xl border px-4 py-3 shadow-sm",
+                isUser
+                  ? "border-cyan-500/30 bg-cyan-500/[0.10]"
+                  : tone.card,
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {isUser ? "You" : "Atlas"}
+                </span>
+                <span className="text-[11px] text-muted-foreground">{relativeTime(message.createdAt)}</span>
+              </div>
+              <div className="mt-2 text-sm leading-6 text-foreground">{message.body}</div>
+              {message.links?.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {message.links.map((link) => (
+                    <a
+                      key={`${message.id}-${link.url}`}
+                      href={link.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs font-medium text-cyan-700 transition-colors hover:border-cyan-500/30 hover:text-cyan-600 dark:text-cyan-300"
+                    >
+                      {link.label}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AtlasSyntheticStream({
   fallback,
 }: {
@@ -331,13 +383,29 @@ function NarrativeRunSection({
   run,
   summary,
   atlasFallback,
+  chatMessages,
 }: {
   run: LiveRunForIssue;
   summary: ReturnType<typeof buildNarrativeSummary>;
   atlasFallback?: AtlasExecutionNarrativeFallback | null;
+  chatMessages?: IssueNarrativeChatMessage[];
 }) {
   const currentTone = toneStyles(summary.current?.tone ?? "info");
   const isSynthetic = isSyntheticAtlasRun(run);
+  const hasChatMessages = isSynthetic && (chatMessages?.length ?? 0) > 0;
+
+  if (hasChatMessages) {
+    return (
+      <div className="space-y-4">
+        {atlasFallback?.projectionWarning ? (
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3 text-sm leading-6 text-amber-900 dark:text-amber-100">
+            {atlasFallback.projectionWarning}
+          </div>
+        ) : null}
+        <NarrativeChatFlow messages={chatMessages ?? []} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -438,7 +506,7 @@ function RunHeader({
   );
 }
 
-export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallback }: IssueLiveSessionPanelProps) {
+export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallback, chatMessages = [] }: IssueLiveSessionPanelProps) {
   const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<SessionViewMode>("narrative");
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
@@ -540,11 +608,11 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/[0.08] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-700 dark:text-cyan-300">
               <Sparkles className="h-3.5 w-3.5" />
-              Execution narrative
+              Conversation
             </div>
-            <div className="mt-3 text-sm font-semibold">Latest turn, proof scope, and the stage story</div>
+            <div className="mt-3 text-sm font-semibold">What you asked, what Atlas answered, and what happened next</div>
             <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
-              Narrative stays concise at the top. Full stream keeps the raw execution detail when you need to inspect the exact projection.
+              The top tab reads like a normal chat. The second tab keeps the technical execution detail when you need to inspect the raw projection.
             </div>
           </div>
 
@@ -562,11 +630,11 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
           <TabsList variant="line" className="w-fit justify-start gap-1">
             <TabsTrigger value="narrative" className="gap-1.5">
               <Sparkles className="h-3.5 w-3.5" />
-              Narrative
+              Chat
             </TabsTrigger>
             <TabsTrigger value="stream" className="gap-1.5">
               <RadioTower className="h-3.5 w-3.5" />
-              Full stream
+              Details
             </TabsTrigger>
           </TabsList>
 
@@ -615,6 +683,7 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
                   run={run}
                   summary={summary}
                   atlasFallback={isSynthetic ? atlasExecutionFallback : null}
+                  chatMessages={isSynthetic ? chatMessages : []}
                 />
               </section>
             );

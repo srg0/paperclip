@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Issue, IssueComment } from "@paperclipai/shared";
-import { buildIssueExecutionCommentContext } from "./issue-execution-turns";
+import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "./issue-execution-turns";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -107,5 +107,57 @@ Atlas принял turn и поднимает workspace для этой зада
       "норм делай mr",
     ]);
     expect(context.projectionWarning).toContain("новые user comments");
+  });
+});
+
+describe("buildIssueNarrativeChatMessages", () => {
+  it("builds a chat-first history with a user request, plain-language proof, and MR creation", () => {
+    const comments = [
+      makeComment("Добавь активацию по двойному тапу", "2026-04-16T13:47:28.574Z", true),
+      makeComment(`<!-- paperclip-display-author: Atlas Bridge · Delivery Orchestrator -->
+### Delivery Orchestrator
+
+**Запрос принят**
+
+Задачу разобрал и передаю ее в Atlas на execution.`, "2026-04-17T12:29:47.523Z"),
+      makeComment(`<!-- paperclip-display-author: Atlas Bridge · Technical Verifier -->
+### Technical Verifier
+
+**Проверка пройдена**
+
+- Что проверено: Подтверждено: сценарий «Project media surface regression» прошёл.
+- Evidence: https://atlas.homio.pro/app/output/example.png`, "2026-04-17T12:39:30.635Z"),
+      makeComment(`<!-- paperclip-display-author: Atlas Bridge · Reporter -->
+### Reporter
+
+**Задача готова к ревью**
+
+**Коротко:** Все ожидаемые изменения доступны на стенде и готовы к human review.`, "2026-04-17T12:39:35.455Z"),
+      makeComment("норм делай mr", "2026-04-17T15:08:22.950Z", true),
+      makeComment(`## Reporter
+
+MR: https://gitlab.kdigital.pro/homio/core/-/merge_requests/273
+Ветка: \`task/paperclip-fc65ed66-c1d1-4732-9dd5-8ee7b5c4d313-fc65ed66\`
+
+Создан новый GitLab MR для текущей ветки задачи.`, "2026-04-17T15:08:40.000Z"),
+    ];
+
+    const context = buildIssueExecutionCommentContext({
+      issue: makeIssue(),
+      projectedTurnNumber: 2,
+      comments,
+    });
+
+    const messages = buildIssueNarrativeChatMessages({
+      issue: makeIssue(),
+      comments,
+      context,
+    });
+
+    expect(messages.some((message) => message.speaker === "user" && message.body.includes("Сделай fullscreen gallery"))).toBe(true);
+    expect(messages.some((message) => message.speaker === "assistant" && message.body.includes("не доказывает fullscreen gallery"))).toBe(true);
+    expect(messages.some((message) => message.speaker === "user" && message.body === "норм делай mr")).toBe(true);
+    expect(messages.some((message) => message.speaker === "assistant" && message.body.includes("Создал MR"))).toBe(true);
+    expect(messages.find((message) => message.body.includes("Создал MR"))?.links?.[0]?.url).toContain("/merge_requests/273");
   });
 });

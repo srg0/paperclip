@@ -35,7 +35,7 @@ import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
 import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
-import { buildIssueExecutionCommentContext } from "../lib/issue-execution-turns";
+import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "../lib/issue-execution-turns";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
@@ -341,6 +341,14 @@ export function IssueDetail() {
       projectionWarning: executionCommentContext?.projectionWarning ?? null,
     };
   }, [executionCommentContext, parsedExecutionDocument]);
+  const atlasNarrativeChatMessages = useMemo(() => {
+    if (!issue) return [];
+    return buildIssueNarrativeChatMessages({
+      issue,
+      comments: comments ?? [],
+      context: executionCommentContext,
+    });
+  }, [comments, executionCommentContext, issue]);
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
@@ -1245,6 +1253,7 @@ export function IssueDetail() {
         issueId={issueId!}
         companyId={issue.companyId}
         atlasExecutionFallback={atlasExecutionPanelModel}
+        chatMessages={atlasNarrativeChatMessages}
       />
 
       <PluginSlotOutlet

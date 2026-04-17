@@ -82,26 +82,52 @@ describe("IssueLiveSessionPanel", () => {
             evidenceUrl: "https://atlas.homio.pro/app/output/example.png",
             rawBody: "# Сводка выполнения Atlas\n\nTURN 2 raw body",
           }}
+          chatMessages={[
+            {
+              id: "msg-1",
+              speaker: "user",
+              body: "Сделай fullscreen gallery удобной.",
+              createdAt: "2026-04-17T09:58:00.000Z",
+              tone: "info",
+            },
+            {
+              id: "msg-2",
+              speaker: "assistant",
+              body: "Правка дошла до review, но доказательство получилось слишком общим. Автопроверка посмотрела только страницу Project media.",
+              createdAt: "2026-04-17T10:18:00.000Z",
+              tone: "warn",
+              links: [{ label: "Открыть evidence", url: "https://atlas.homio.pro/app/output/example.png" }],
+            },
+            {
+              id: "msg-3",
+              speaker: "user",
+              body: "норм делай mr",
+              createdAt: "2026-04-17T10:19:00.000Z",
+              tone: "info",
+            },
+            {
+              id: "msg-4",
+              speaker: "assistant",
+              body: "Создал MR для этой задачи.",
+              createdAt: "2026-04-17T10:20:00.000Z",
+              tone: "success",
+              links: [{ label: "Открыть MR", url: "https://gitlab.kdigital.pro/homio/core/-/merge_requests/273" }],
+            },
+          ]}
         />,
       );
     });
 
-    expect(container.textContent).toContain("Execution narrative");
+    expect(container.textContent).toContain("Conversation");
     expect(container.textContent).toContain("Settled");
     expect(container.textContent).toContain("1 run");
     expect(container.textContent).toContain("Atlas execution");
-    expect(container.textContent).toContain("Projected turn");
-    expect(container.textContent).toContain("TURN 2");
-    expect(container.textContent).toContain("Latest executed request");
-    expect(container.textContent).toContain("Turn history");
-    expect(container.textContent).toContain("TURN 1");
-    expect(container.textContent).toContain("TURN 2");
-    expect(container.textContent).toContain("Executor said");
-    expect(container.textContent).toContain("Добавил double tap activation.");
-    expect(container.textContent).toContain("Still missing");
-    expect(container.textContent).toContain("Нужна ручная проверка double tap.");
-    expect(container.textContent).toContain("Newer user comments");
+    expect(container.textContent).toContain("Chat");
+    expect(container.textContent).toContain("Details");
+    expect(container.textContent).toContain("Сделай fullscreen gallery удобной.");
+    expect(container.textContent).toContain("Правка дошла до review");
     expect(container.textContent).toContain("норм делай mr");
+    expect(container.textContent).toContain("Создал MR для этой задачи.");
 
     act(() => {
       root.unmount();
