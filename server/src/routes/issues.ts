@@ -454,32 +454,55 @@ export function issueRoutes(
     return { project, goal: null };
   }
 
-  async function maybeTriggerAtlasFollowupFromComment(input: {
-    req: Request;
-    issue: {
-      id: string;
-      companyId: string;
+async function maybeTriggerAtlasFollowupFromComment(input: {
+  req: Request;
+  issue: {
+    id: string;
+    companyId: string;
+  };
+  commentId: string;
+  commentBody: string;
+  actor: ReturnType<typeof getActorInfo>;
+}): Promise<{
+  triggered: boolean;
+  mergeRequestIntentHandled: boolean;
+  mergeRequestError: string | null;
+}> {
+  const wantsMergeRequest = isAtlasMergeRequestIntent(input.commentBody);
+  if (input.actor.actorType !== "user" || !deps?.workerManager) {
+    return {
+      triggered: false,
+      mergeRequestIntentHandled: false,
+      mergeRequestError: null,
     };
-    commentId: string;
-    commentBody: string;
-    actor: ReturnType<typeof getActorInfo>;
-  }) {
-    if (input.actor.actorType !== "user" || !deps?.workerManager) {
-      return false;
-    }
+  }
 
-    const executionDoc = await documentsSvc.getIssueDocumentByKey(input.issue.id, ATLAS_EXECUTION_DOCUMENT_KEY);
-    if (!executionDoc?.body) {
-      return false;
-    }
+  const executionDoc = await documentsSvc.getIssueDocumentByKey(input.issue.id, ATLAS_EXECUTION_DOCUMENT_KEY);
+  if (!executionDoc?.body) {
+    return {
+      triggered: false,
+      mergeRequestIntentHandled: false,
+      mergeRequestError: null,
+    };
+  }
 
-    const plugin = await pluginRegistry.getByKey(ATLAS_BRIDGE_PLUGIN_KEY);
-    if (!plugin || plugin.status !== "ready") {
+  const plugin = await pluginRegistry.getByKey(ATLAS_BRIDGE_PLUGIN_KEY);
+  if (!plugin || plugin.status !== "ready") {
       logger.warn(
         { issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY, pluginStatus: plugin?.status ?? "missing" },
         "atlas follow-up requested from issue comment, but bridge plugin is not ready",
       );
-      return false;
+      return wantsMergeRequest
+        ? {
+          triggered: false,
+          mergeRequestIntentHandled: true,
+          mergeRequestError: "Atlas Bridge plugin is not ready for merge-request creation",
+        }
+        : {
+          triggered: false,
+          mergeRequestIntentHandled: false,
+          mergeRequestError: null,
+        };
     }
     if (!deps.workerManager.getWorker(plugin.id) || !deps.workerManager.isRunning(plugin.id)) {
       logger.warn(
@@ -491,10 +514,19 @@ export function issueRoutes(
         },
         "atlas follow-up requested from issue comment, but bridge worker is not running",
       );
-      return false;
+      return wantsMergeRequest
+        ? {
+          triggered: false,
+          mergeRequestIntentHandled: true,
+          mergeRequestError: "Atlas Bridge worker is not running for merge-request creation",
+        }
+        : {
+          triggered: false,
+          mergeRequestIntentHandled: false,
+          mergeRequestError: null,
+        };
     }
 
-    const wantsMergeRequest = isAtlasMergeRequestIntent(input.commentBody);
     const explicitTurn = extractFollowupTurnNumber(input.commentBody);
     const comments = explicitTurn
       ? null
@@ -560,13 +592,45 @@ export function issueRoutes(
           source: "issue_comment",
         },
       });
-      return true;
+      return {
+        triggered: true,
+        mergeRequestIntentHandled: wantsMergeRequest,
+        mergeRequestError: null,
+      };
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       logger.warn(
         { err, issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY },
         "failed to trigger atlas follow-up from issue comment",
       );
-      return false;
+      if (wantsMergeRequest) {
+        await logActivity(db, {
+          companyId: input.issue.companyId,
+          actorType: input.actor.actorType,
+          actorId: input.actor.actorId,
+          agentId: input.actor.agentId,
+          runId: input.actor.runId,
+          action: "issue.mr_request_blocked",
+          entityType: "issue",
+          entityId: input.issue.id,
+          details: {
+            pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+            source: "issue_comment",
+            commentId: input.commentId,
+            error: errorMessage,
+          },
+        });
+        return {
+          triggered: false,
+          mergeRequestIntentHandled: true,
+          mergeRequestError: errorMessage,
+        };
+      }
+      return {
+        triggered: false,
+        mergeRequestIntentHandled: false,
+        mergeRequestError: null,
+      };
     }
   }
 
@@ -1511,6 +1575,8 @@ export function issueRoutes(
 
     let comment = null;
     let atlasFollowupTriggered = false;
+    let atlasMergeRequestHandled = false;
+    let atlasMergeRequestError: string | null = null;
     if (commentBody) {
       comment = await svc.addComment(id, commentBody, {
         agentId: actor.agentId ?? undefined,
@@ -1538,13 +1604,16 @@ export function issueRoutes(
       });
 
       if (!directedCommentRequested && !directedCommentReassignment) {
-        atlasFollowupTriggered = await maybeTriggerAtlasFollowupFromComment({
+        const atlasCommentResult = await maybeTriggerAtlasFollowupFromComment({
           req,
           issue,
           commentId: comment.id,
           commentBody,
           actor,
         });
+        atlasFollowupTriggered = atlasCommentResult.triggered;
+        atlasMergeRequestHandled = atlasCommentResult.mergeRequestIntentHandled;
+        atlasMergeRequestError = atlasCommentResult.mergeRequestError;
       }
 
     }
@@ -1583,7 +1652,7 @@ export function issueRoutes(
             ...(interruptedRunId ? { interruptedRunId } : {}),
           },
         });
-      } else if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
+      } else if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog" && !atlasMergeRequestHandled) {
         if (commentBody && comment) {
           wakeups.set(issue.assigneeAgentId, {
             source: "automation",
@@ -1628,7 +1697,7 @@ export function issueRoutes(
         }
       }
 
-      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId) {
+      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId && !atlasMergeRequestHandled) {
           wakeups.set(issue.assigneeAgentId, {
             source: "automation",
             triggerDetail: "system",
@@ -1648,7 +1717,7 @@ export function issueRoutes(
         });
       }
 
-      if (commentBody && comment) {
+      if (commentBody && comment && !atlasMergeRequestHandled) {
         let mentionedIds: string[] = [];
         try {
           mentionedIds = await svc.findMentionedAgents(issue.companyId, commentBody);
@@ -1689,6 +1758,8 @@ export function issueRoutes(
       ...issue,
       comment,
       atlasFollowupTriggered,
+      atlasMergeRequestHandled,
+      atlasMergeRequestError,
       interruptedRunId,
     });
   });
@@ -1999,8 +2070,12 @@ export function issueRoutes(
       },
     });
 
-    const atlasFollowupTriggered = directedCommentTargetId
-      ? false
+    const atlasCommentResult = directedCommentTargetId
+      ? {
+        triggered: false,
+        mergeRequestIntentHandled: false,
+        mergeRequestError: null,
+      }
       : await maybeTriggerAtlasFollowupFromComment({
         req,
         issue: currentIssue,
@@ -2008,6 +2083,9 @@ export function issueRoutes(
         commentBody: req.body.body,
         actor,
       });
+    const atlasFollowupTriggered = atlasCommentResult.triggered;
+    const atlasMergeRequestHandled = atlasCommentResult.mergeRequestIntentHandled;
+    const atlasMergeRequestError = atlasCommentResult.mergeRequestError;
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {
@@ -2040,7 +2118,7 @@ export function issueRoutes(
             ...(interruptedRunId ? { interruptedRunId } : {}),
           },
         });
-      } else if (assigneeId && !atlasFollowupTriggered && (reopened || !skipWake)) {
+      } else if (assigneeId && !atlasFollowupTriggered && !atlasMergeRequestHandled && (reopened || !skipWake)) {
         if (reopened) {
           wakeups.set(assigneeId, {
             source: "automation",
@@ -2092,10 +2170,12 @@ export function issueRoutes(
       }
 
       let mentionedIds: string[] = [];
-      try {
-        mentionedIds = await svc.findMentionedAgents(issue.companyId, req.body.body);
-      } catch (err) {
-        logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+      if (!atlasMergeRequestHandled) {
+        try {
+          mentionedIds = await svc.findMentionedAgents(issue.companyId, req.body.body);
+        } catch (err) {
+          logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+        }
       }
 
       for (const mentionedId of mentionedIds) {
@@ -2130,6 +2210,8 @@ export function issueRoutes(
       ...currentIssue,
       comment,
       atlasFollowupTriggered,
+      atlasMergeRequestHandled,
+      atlasMergeRequestError,
       interruptedRunId,
     });
   });

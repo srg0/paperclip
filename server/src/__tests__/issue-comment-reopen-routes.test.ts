@@ -406,6 +406,33 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("does not wake the assignee into a new turn when MR creation is requested but blocked", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+    mockWorkerManager.call.mockRejectedValueOnce(new Error("Issue is not review-ready for merge request creation"));
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "норм делай mr" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(res.body.atlasMergeRequestHandled).toBe(true);
+    expect(res.body.atlasMergeRequestError).toContain("Issue is not review-ready for merge request creation");
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({ reason: "issue_commented" }),
+    );
+  });
+
   it("starts atlas follow-up from the PATCH comment path too", async () => {
     const issue = makeIssue("todo");
     mockIssueService.getById.mockResolvedValue(issue);
