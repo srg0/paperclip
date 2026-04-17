@@ -315,6 +315,21 @@ export function IssueDetail() {
     () => parseExecutionDocument(executionDocument),
     [executionDocument],
   );
+  const atlasExecutionPanelModel = useMemo(() => {
+    if (!issue) return parsedExecutionDocument;
+    const expectedTurnNumber = issue.requestDepth > 0 ? issue.requestDepth + 1 : 1;
+    const projectedTurnNumber = parsedExecutionDocument.turnNumber;
+    const projectionWarning = issue.requestDepth > 0 && (
+      projectedTurnNumber === null
+      || projectedTurnNumber < expectedTurnNumber
+    )
+      ? `У issue уже есть ${issue.requestDepth} follow-up ${issue.requestDepth === 1 ? "request" : "requests"}, но текущая Atlas projection всё ещё показывает ${parsedExecutionDocument.turnLabel ?? "turn не указан"}.`
+      : null;
+    return {
+      ...parsedExecutionDocument,
+      projectionWarning,
+    };
+  }, [issue, parsedExecutionDocument]);
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
@@ -1196,6 +1211,12 @@ export function IssueDetail() {
         />
       ) : null}
 
+      <IssueLiveSessionPanel
+        issueId={issueId!}
+        companyId={issue.companyId}
+        atlasExecutionFallback={atlasExecutionPanelModel}
+      />
+
       <PluginSlotOutlet
         slotTypes={["toolbarButton", "contextMenuItem"]}
         entityType="issue"
@@ -1380,13 +1401,6 @@ export function IssueDetail() {
             onAttachImage={async (file) => {
               await uploadAttachment.mutateAsync(file);
             }}
-            liveRunSlot={(
-              <IssueLiveSessionPanel
-                issueId={issueId!}
-                companyId={issue.companyId}
-                atlasExecutionFallback={parsedExecutionDocument}
-              />
-            )}
             composerStatusSlot={pendingComposerStatus ? (
               <div
                 className={cn(

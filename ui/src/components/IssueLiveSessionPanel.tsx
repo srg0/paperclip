@@ -51,11 +51,15 @@ function isSyntheticAtlasRun(run: LiveRunForIssue): boolean {
 
 function hasAtlasExecutionNarrativeFallback(fallback: AtlasExecutionNarrativeFallback | null | undefined): boolean {
   return Boolean(
-    fallback?.currentState
+    fallback?.headline
+      || fallback?.currentState
       || fallback?.summary
       || fallback?.verifyStatus
+      || fallback?.turnLabel
       || fallback?.nextStep
       || fallback?.evidenceUrl
+      || fallback?.rawBody
+      || fallback?.projectionWarning
       || fallback?.measuredObservations?.length
       || fallback?.recentMilestones?.length,
   );
@@ -140,14 +144,165 @@ function NarrativeTimeline({ timeline }: { timeline: NarrativeStep[] }) {
   );
 }
 
+function AtlasFactCard({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "success" | "warning";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border px-3 py-3",
+        tone === "success" && "border-emerald-500/25 bg-emerald-500/[0.05]",
+        tone === "warning" && "border-amber-500/25 bg-amber-500/[0.06]",
+        tone === "neutral" && "border-border/70 bg-background/45",
+      )}
+    >
+      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm leading-6 text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function AtlasNarrativeDetails({
+  fallback,
+}: {
+  fallback: AtlasExecutionNarrativeFallback;
+}) {
+  const verificationLine = fallback.verifierScope
+    ? fallback.verifyStatus
+      ? `${fallback.verifierScope} (${fallback.verifyStatus})`
+      : fallback.verifierScope
+    : fallback.verifyStatus;
+  const primaryLimitation = fallback.verificationLimitations?.[0] ?? null;
+  const topObservation = fallback.measuredObservations?.[0] ?? null;
+
+  return (
+    <div className="space-y-3">
+      {fallback.projectionWarning ? (
+        <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3 text-sm leading-6 text-amber-900 dark:text-amber-100">
+          {fallback.projectionWarning}
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {fallback.turnLabel ? <AtlasFactCard label="Projected turn" value={fallback.turnLabel} /> : null}
+        {fallback.currentState ? (
+          <AtlasFactCard
+            label="Current state"
+            value={fallback.currentState}
+            tone={fallback.verifyStatus === "passed" ? "success" : "neutral"}
+          />
+        ) : null}
+        {verificationLine ? (
+          <AtlasFactCard
+            label="Verifier scope"
+            value={verificationLine}
+            tone={fallback.verifyStatus === "passed" ? "success" : "neutral"}
+          />
+        ) : null}
+      </div>
+
+      {fallback.executorSummary ? <AtlasFactCard label="Executor said" value={fallback.executorSummary} /> : null}
+      {primaryLimitation ? <AtlasFactCard label="Still missing" value={primaryLimitation} tone="warning" /> : null}
+      {topObservation ? <AtlasFactCard label="Top observation" value={topObservation} /> : null}
+
+      {(fallback.standUrl || fallback.evidenceUrl) ? (
+        <div className="flex flex-wrap gap-2">
+          {fallback.standUrl ? (
+            <a
+              href={fallback.standUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-cyan-500/25 bg-cyan-500/[0.08] px-3 py-1.5 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-500/[0.14] dark:text-cyan-300"
+            >
+              Open stand
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
+          {fallback.evidenceUrl ? (
+            <a
+              href={fallback.evidenceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-3 py-1.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-500/[0.14] dark:text-emerald-300"
+            >
+              Open evidence
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AtlasSyntheticStream({
+  fallback,
+  mode,
+}: {
+  fallback: AtlasExecutionNarrativeFallback;
+  mode: TranscriptMode;
+}) {
+  if (mode === "raw") {
+    return (
+      <pre className="overflow-x-auto rounded-xl border border-border/70 bg-background/55 p-4 text-xs leading-6 text-muted-foreground">
+        {fallback.rawBody || "Raw Atlas execution document is not available."}
+      </pre>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
+        {fallback.headline ? <AtlasFactCard label="Headline" value={fallback.headline} /> : null}
+        {fallback.summary ? <AtlasFactCard label="Summary" value={fallback.summary} /> : null}
+        {fallback.turnLabel ? <AtlasFactCard label="Projected turn" value={fallback.turnLabel} /> : null}
+        {fallback.currentState ? <AtlasFactCard label="Current state" value={fallback.currentState} /> : null}
+      </div>
+
+      <AtlasNarrativeDetails fallback={fallback} />
+
+      {fallback.recentMilestones?.length ? (
+        <div className="rounded-xl border border-border/70 bg-background/45 p-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Milestones
+          </div>
+          <div className="mt-3 space-y-3">
+            {fallback.recentMilestones.map((milestone, index) => (
+              <div key={`${milestone.role}-${milestone.title}-${index}`} className="rounded-xl border border-border/70 bg-background/65 px-3 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-foreground">
+                    {milestone.role}
+                  </span>
+                  <span className="text-sm font-medium text-foreground">{milestone.title}</span>
+                  {milestone.at ? <span className="text-xs text-muted-foreground">{milestone.at}</span> : null}
+                </div>
+                <div className="mt-2 text-sm leading-6 text-muted-foreground">{milestone.summary}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function NarrativeRunSection({
   run,
   summary,
+  atlasFallback,
 }: {
   run: LiveRunForIssue;
   summary: ReturnType<typeof buildNarrativeSummary>;
+  atlasFallback?: AtlasExecutionNarrativeFallback | null;
 }) {
   const currentTone = toneStyles(summary.current?.tone ?? "info");
+  const isSynthetic = isSyntheticAtlasRun(run);
 
   return (
     <div className="space-y-3">
@@ -156,6 +311,11 @@ function NarrativeRunSection({
           <Badge variant="outline" className={cn("rounded-full border text-[10px] uppercase tracking-[0.18em]", currentTone.badge)}>
             Current focus
           </Badge>
+          {atlasFallback?.turnLabel ? (
+            <Badge variant="outline" className="rounded-full border-border/70 bg-background/80 text-[10px] uppercase tracking-[0.16em]">
+              {atlasFallback.turnLabel}
+            </Badge>
+          ) : null}
           {summary.current ? (
             <span className="text-[11px] text-muted-foreground">{relativeTime(summary.current.ts)}</span>
           ) : null}
@@ -175,9 +335,7 @@ function NarrativeRunSection({
         </div>
       </div>
 
-      <div className="rounded-xl border border-dashed border-border/70 bg-background/45 px-4 py-3 text-xs text-muted-foreground">
-        {summary.statusLine}
-      </div>
+      {isSynthetic && atlasFallback ? <AtlasNarrativeDetails fallback={atlasFallback} /> : null}
 
       {summary.timeline.length > 0 ? (
         <NarrativeTimeline timeline={summary.timeline} />
@@ -342,12 +500,11 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/[0.08] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-700 dark:text-cyan-300">
               <Sparkles className="h-3.5 w-3.5" />
-              Interactive Session
+              Execution narrative
             </div>
-            <div className="mt-3 text-sm font-semibold">Readable live execution for this task</div>
+            <div className="mt-3 text-sm font-semibold">Latest turn, proof scope, and the stage story</div>
             <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
-              Follow the agent in plain English, then switch to the full stream when you need raw detail.
-              Comments below stay live, so you can redirect the session without leaving the task.
+              Narrative stays concise at the top. Full stream keeps the raw execution detail when you need to inspect the exact projection.
             </div>
           </div>
 
@@ -414,7 +571,11 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
                   cancelling={cancellingRunIds.has(run.id)}
                   onCancel={() => handleCancelRun(run.id)}
                 />
-                <NarrativeRunSection run={run} summary={summary} />
+                <NarrativeRunSection
+                  run={run}
+                  summary={summary}
+                  atlasFallback={isSynthetic ? atlasExecutionFallback : null}
+                />
               </section>
             );
           })}
@@ -439,20 +600,22 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
                 />
 
                 <div className="max-h-[360px] overflow-y-auto pr-1">
-                  <RunTranscriptView
-                    entries={transcript}
-                    mode={transcriptMode}
-                    density="compact"
-                    streaming={isActive}
-                    collapseStdout
-                    emptyMessage={
-                      isSynthetic
-                        ? "Raw transcript is not available for Atlas synthetic runs. Use Narrative for bridge milestones and execution summary."
-                        : hasOutputForRun(run.id)
+                  {isSynthetic && atlasExecutionFallback ? (
+                    <AtlasSyntheticStream fallback={atlasExecutionFallback} mode={transcriptMode} />
+                  ) : (
+                    <RunTranscriptView
+                      entries={transcript}
+                      mode={transcriptMode}
+                      density="compact"
+                      streaming={isActive}
+                      collapseStdout
+                      emptyMessage={
+                        hasOutputForRun(run.id)
                           ? "Waiting for transcript parsing..."
                           : "Waiting for run output..."
-                    }
-                  />
+                      }
+                    />
+                  )}
                 </div>
               </section>
             );

@@ -17,16 +17,21 @@ export interface NarrativeSummary {
 }
 
 export interface AtlasExecutionNarrativeFallback {
+  rawBody?: string | null;
+  headline?: string | null;
   summary?: string | null;
   currentState?: string | null;
   nextStep?: string | null;
   verifyStatus?: string | null;
   updatedAt?: string | null;
+  turnLabel?: string | null;
+  turnNumber?: number | null;
   standUrl?: string | null;
   evidenceUrl?: string | null;
   executorSummary?: string | null;
   verifierScope?: string | null;
   verificationLimitations?: string[] | null;
+  projectionWarning?: string | null;
   measuredObservations?: string[] | null;
   recentMilestones?: Array<{
     role: string;

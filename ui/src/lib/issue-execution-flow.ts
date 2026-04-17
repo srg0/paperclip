@@ -31,6 +31,7 @@ export interface IssueExecutionHeaderStage {
 }
 
 export interface ParsedExecutionDocument {
+  rawBody: string;
   headline: string | null;
   summary: string | null;
   currentState: string | null;
@@ -145,6 +146,21 @@ function parseField(pattern: RegExp, body: string): string | null {
   return match?.[1]?.trim() || null;
 }
 
+function normalizeExecutionClass(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized || null;
+}
+
+function isNonBlockingFailureClass(value: string | null | undefined): boolean {
+  const normalized = normalizeExecutionClass(value);
+  if (!normalized) return true;
+  return new Set(["passed", "pass", "success", "succeeded", "completed", "ready", "ok"]).has(normalized);
+}
+
+function hasBlockingFailureClass(value: string | null | undefined): boolean {
+  return !isNonBlockingFailureClass(value);
+}
+
 function parseIntField(value: string | null): number {
   if (!value) return 0;
   const parsed = Number.parseInt(value, 10);
@@ -238,6 +254,7 @@ export function parseExecutionDocument(document: IssueDocument | null | undefine
   const { headline, summary } = parseHeadlineAndSummary(body);
   const turnLabel = parseField(FIELD_PATTERNS.turnLabel, body);
   return {
+    rawBody: body,
     headline,
     summary,
     currentState: parseField(FIELD_PATTERNS.currentState, body),
@@ -499,7 +516,7 @@ function deriveFlowStatus(input: {
   actualNextObservedStage: IssueExecutionStageKey | null;
 }): Pick<IssueExecutionHeaderModel, "flowStatus" | "flowSeverity" | "mismatchText"> {
   const { parsed, expectedNextStage, actualNextObservedStage } = input;
-  if (parsed.failureClass) {
+  if (hasBlockingFailureClass(parsed.failureClass)) {
     return {
       flowStatus: "Diverged",
       flowSeverity: "error",
@@ -607,7 +624,7 @@ export function buildIssueExecutionHeaderModel(input: {
       state = occurrences > 1 ? "looping" : "passed";
     }
     if (index === currentStageIndex) {
-      if (parsed.failureClass) state = "failed";
+      if (hasBlockingFailureClass(parsed.failureClass)) state = "failed";
       else if (stage.key === "report" && autoReviewBlocked && successExecution) state = "blocked";
       else if (retryCount > 0 && isStageActive) state = "retrying";
       else if (occurrences > 1) state = "looping";

@@ -130,6 +130,38 @@ describe("buildIssueExecutionHeaderModel", () => {
     expect(model.stages.find((stage) => stage.key === "stand_apply")?.state).toBe("passed");
     expect(model.stages.find((stage) => stage.key === "verify")?.state).toBe("passed");
   });
+
+  it("does not surface success-like failureClass values as an error state", () => {
+    const model = buildIssueExecutionHeaderModel({
+      issue: makeIssue({ status: "in_review" }),
+      executionDocument: makeExecutionDocument(`# Сводка выполнения Atlas
+
+Подтверждено: сценарий прошёл.
+
+## Что произошло
+
+- Проверка: \`passed\`
+- Turn: \`TURN 1\`
+
+## Техническая привязка
+
+- Execution state: \`completed\`
+- Failure class: \`passed\`
+- Projection updated: \`2026-04-15T02:05:17.248Z\``),
+      linkedRuns: [],
+      liveRuns: [],
+      activeRun: null,
+      activity: [],
+      agents: [
+        makeAgent("agent-delivery", "Delivery Orchestrator", "delivery-orchestrator"),
+        makeAgent("agent-reporter", "Reporter", "reporter"),
+      ],
+    });
+
+    expect(model.flowSeverity).not.toBe("error");
+    expect(model.mismatchText).toBeNull();
+    expect(model.stages.find((stage) => stage.key === "report")?.state).toBe("passed");
+  });
 });
 
 describe("buildPendingAtlasFollowupStatus", () => {
@@ -231,6 +263,7 @@ describe("parseExecutionDocument", () => {
     expect(parsed.verifierScope).toBe("Project layouts surface regression");
     expect(parsed.verificationLimitations[0]).toContain("double tap");
     expect(parsed.measuredObservations).toContain("Класс сценария: project_layouts_surface");
+    expect(parsed.rawBody).toContain("Как шёл turn");
     expect(parsed.recentMilestones).toHaveLength(2);
     expect(parsed.recentMilestones[0]?.role).toBe("Atlas Executor");
   });
