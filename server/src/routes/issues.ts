@@ -68,13 +68,25 @@ function isAtlasMergeRequestIntent(commentBody: string | null | undefined): bool
   if (typeof commentBody !== "string" || commentBody.trim().length === 0) {
     return false;
   }
-  const normalized = commentBody.trim().toLowerCase();
+  const normalized = commentBody
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return false;
+  }
+  if (
+    /(?:^|\s)не\s+(?:открывай|создавай|делай|make|open|create)\s+(?:mr|merge request)(?:$|\s)/u.test(normalized)
+    || /(?:^|\s)без\s+(?:mr|merge request)(?:$|\s)/u.test(normalized)
+  ) {
+    return false;
+  }
   return (
-    normalized.includes("открой mr")
-    || normalized.includes("создай mr")
-    || normalized.includes("open mr")
-    || normalized.includes("create mr")
-    || normalized.includes("merge request")
+    /(?:^|\s)(?:открой|открывай|создай|создавай|сделай|делай)\s+(?:mr|merge request)(?:$|\s)/u.test(normalized)
+    || /(?:^|\s)(?:open|create|make)\s+(?:mr|merge request)(?:$|\s)/u.test(normalized)
+    || /(?:^|\s)merge request(?:$|\s)/u.test(normalized)
   );
 }
 

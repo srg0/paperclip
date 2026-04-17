@@ -343,6 +343,69 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("routes colloquial Russian MR comments to Atlas MR creation too", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "норм делай mr" });
+
+    expect(res.status).toBe(201);
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      expect.objectContaining({
+        key: "atlas-bridge-open-issue-merge-request",
+        params: expect.objectContaining({
+          issueId: "11111111-1111-4111-8111-111111111111",
+          companyId: "company-1",
+          commentId: "comment-1",
+        }),
+      }),
+      15_000,
+    );
+  });
+
+  it("routes colloquial MR comments to MR creation even when the issue is already in review", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockIssueService.getById.mockResolvedValue({
+      ...makeIssue("todo"),
+      status: "in_review",
+    });
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "норм делай mr" });
+
+    expect(res.status).toBe(201);
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
+      "plugin-1",
+      "performAction",
+      expect.objectContaining({
+        key: "atlas-bridge-open-issue-merge-request",
+      }),
+      15_000,
+    );
+  });
+
   it("starts atlas follow-up from the PATCH comment path too", async () => {
     const issue = makeIssue("todo");
     mockIssueService.getById.mockResolvedValue(issue);
