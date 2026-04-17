@@ -49,6 +49,18 @@ function isSyntheticAtlasRun(run: LiveRunForIssue): boolean {
   return run.syntheticSource === "atlas_execution";
 }
 
+function hasAtlasExecutionNarrativeFallback(fallback: AtlasExecutionNarrativeFallback | null | undefined): boolean {
+  return Boolean(
+    fallback?.currentState
+      || fallback?.summary
+      || fallback?.verifyStatus
+      || fallback?.nextStep
+      || fallback?.evidenceUrl
+      || fallback?.measuredObservations?.length
+      || fallback?.recentMilestones?.length,
+  );
+}
+
 function toneStyles(tone: NarrativeTone) {
   switch (tone) {
     case "success":
@@ -272,10 +284,28 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
         issueId,
       });
     }
+    if (deduped.size === 0 && hasAtlasExecutionNarrativeFallback(atlasExecutionFallback)) {
+      const syntheticCreatedAt = atlasExecutionFallback?.updatedAt ?? "1970-01-01T00:00:00.000Z";
+      deduped.set(`atlas-execution-summary:${issueId}:${syntheticCreatedAt}`, {
+        id: `atlas-execution-summary:${issueId}:${syntheticCreatedAt}`,
+        status: "succeeded",
+        invocationSource: "atlas_execution",
+        triggerDetail: "Atlas execution summary",
+        startedAt: syntheticCreatedAt,
+        finishedAt: syntheticCreatedAt,
+        createdAt: syntheticCreatedAt,
+        agentId: "atlas-execution",
+        agentName: "Atlas execution",
+        adapterType: "atlas_execution",
+        issueId,
+        syntheticSource: "atlas_execution",
+        openable: false,
+      });
+    }
     return [...deduped.values()].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
-  }, [activeRun, issueId, liveRuns]);
+  }, [activeRun, atlasExecutionFallback, issueId, liveRuns]);
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({ runs, companyId });
 
