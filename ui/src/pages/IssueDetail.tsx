@@ -34,8 +34,11 @@ import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
+import { IssueConversationComposer } from "../components/issue-conversation/IssueConversationComposer";
+import { IssueConversationSurface } from "../components/issue-conversation/IssueConversationSurface";
 import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
 import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "../lib/issue-execution-turns";
+import type { IssueConversationVerbosity } from "../lib/issue-conversation-model";
 import { filterIssueTimelineRuns } from "../lib/issue-run-history";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -63,6 +66,7 @@ import {
   ListTree,
   MessageSquare,
   MoreHorizontal,
+  PanelsTopLeft,
   Paperclip,
   Repeat,
   SlidersHorizontal,
@@ -235,7 +239,9 @@ export function IssueDetail() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
+  const [surfaceTab, setSurfaceTab] = useState("conversation");
   const [detailTab, setDetailTab] = useState("comments");
+  const [conversationVerbosity, setConversationVerbosity] = useState<IssueConversationVerbosity>("auto");
   const [secondaryOpen, setSecondaryOpen] = useState({
     approvals: false,
   });
@@ -620,6 +626,26 @@ export function IssueDetail() {
       parsed: parsedExecutionDocument,
     });
   }, [pendingAtlasFollowup, parsedExecutionDocument]);
+  const pendingComposerStatusCard = pendingComposerStatus ? (
+    <div
+      className={cn(
+        "rounded-lg border px-3 py-2 text-xs",
+        pendingComposerStatus.state === "failed"
+          ? "border-red-500/30 bg-red-500/[0.06] text-red-900 dark:text-red-100"
+          : pendingComposerStatus.state === "completed"
+            ? "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-900 dark:text-emerald-100"
+            : pendingComposerStatus.state === "running"
+              ? "border-cyan-500/30 bg-cyan-500/[0.06] text-cyan-900 dark:text-cyan-100"
+              : "border-amber-500/30 bg-amber-500/[0.06] text-amber-900 dark:text-amber-100"
+      )}
+    >
+      <div className="font-medium">{pendingComposerStatus.title}</div>
+      <div className="mt-1 opacity-90">{pendingComposerStatus.summary}</div>
+      {pendingComposerStatus.detail ? (
+        <div className="mt-1 opacity-75">{pendingComposerStatus.detail}</div>
+      ) : null}
+    </div>
+  ) : null;
 
   const invalidateIssue = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
@@ -1252,189 +1278,45 @@ export function IssueDetail() {
         />
       ) : null}
 
-      <IssueLiveSessionPanel
-        issueId={issueId!}
-        companyId={issue.companyId}
-        atlasExecutionFallback={atlasExecutionPanelModel}
-        chatMessages={atlasNarrativeChatMessages}
-      />
-
-      <PluginSlotOutlet
-        slotTypes={["toolbarButton", "contextMenuItem"]}
-        entityType="issue"
-        context={{
-          companyId: issue.companyId,
-          projectId: issue.projectId ?? null,
-          entityId: issue.id,
-          entityType: "issue",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-        missingBehavior="placeholder"
-      />
-
-      <PluginLauncherOutlet
-        placementZones={["toolbarButton"]}
-        entityType="issue"
-        context={{
-          companyId: issue.companyId,
-          projectId: issue.projectId ?? null,
-          entityId: issue.id,
-          entityType: "issue",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-      />
-
-      <PluginSlotOutlet
-        slotTypes={["taskDetailView"]}
-        entityType="issue"
-        context={{
-          companyId: issue.companyId,
-          projectId: issue.projectId ?? null,
-          entityId: issue.id,
-          entityType: "issue",
-        }}
-        className="space-y-3"
-        itemClassName="rounded-lg border border-border p-3"
-        missingBehavior="placeholder"
-      />
-
-      <IssueDocumentsSection
-        issue={issue}
-        canDeleteDocuments={Boolean(session?.user?.id)}
-        mentions={mentionOptions}
-        imageUploadHandler={async (file) => {
-          const attachment = await uploadAttachment.mutateAsync(file);
-          return attachment.contentPath;
-        }}
-        extraActions={!hasAttachments ? attachmentUploadButton : undefined}
-      />
-
-      {hasAttachments ? (
-        <div
-        className={cn(
-          "space-y-3 rounded-lg transition-colors",
-        )}
-        onDragEnter={(evt) => {
-          evt.preventDefault();
-          setAttachmentDragActive(true);
-        }}
-        onDragOver={(evt) => {
-          evt.preventDefault();
-          setAttachmentDragActive(true);
-        }}
-        onDragLeave={(evt) => {
-          if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
-          setAttachmentDragActive(false);
-        }}
-        onDrop={(evt) => void handleAttachmentDrop(evt)}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
-          {attachmentUploadButton}
-        </div>
-
-        {attachmentError && (
-          <p className="text-xs text-destructive">{attachmentError}</p>
-        )}
-
-        <div className="space-y-2">
-          {attachmentList.map((attachment) => (
-            <div key={attachment.id} className="border border-border rounded-md p-2">
-              <div className="flex items-center justify-between gap-2">
-                <a
-                  href={attachment.contentPath}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs hover:underline truncate"
-                  title={attachment.originalFilename ?? attachment.id}
-                >
-                  {attachment.originalFilename ?? attachment.id}
-                </a>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-destructive"
-                  onClick={() => deleteAttachment.mutate(attachment.id)}
-                  disabled={deleteAttachment.isPending}
-                  title="Delete attachment"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
-              </p>
-              {isImageAttachment(attachment) && (
-                <a href={attachment.contentPath} target="_blank" rel="noreferrer">
-                  <img
-                    src={attachment.contentPath}
-                    alt={attachment.originalFilename ?? "attachment"}
-                    className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
-                    loading="lazy"
-                  />
-                </a>
-              )}
-            </div>
-          ))}
-        </div>
-        </div>
-      ) : null}
-
-      <IssueWorkspaceCard
-        issue={issue}
-        project={orderedProjects.find((p) => p.id === issue.projectId) ?? null}
-        onUpdate={(data) => updateIssue.mutate(data)}
-      />
-
-      <Separator />
-
-      <Tabs value={detailTab} onValueChange={setDetailTab} className="space-y-3">
+      <Tabs value={surfaceTab} onValueChange={setSurfaceTab} className="space-y-4">
         <TabsList variant="line" className="w-full justify-start gap-1">
-          <TabsTrigger value="comments" className="gap-1.5">
+          <TabsTrigger value="conversation" className="gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" />
-            Comments
+            Conversation
           </TabsTrigger>
-          <TabsTrigger value="subissues" className="gap-1.5">
-            <ListTree className="h-3.5 w-3.5" />
-            Sub-issues
+          <TabsTrigger value="dashboard" className="gap-1.5">
+            <PanelsTopLeft className="h-3.5 w-3.5" />
+            Task Dashboard
           </TabsTrigger>
-          <TabsTrigger value="activity" className="gap-1.5">
-            <ActivityIcon className="h-3.5 w-3.5" />
-            Activity
-          </TabsTrigger>
-          {issuePluginTabItems.map((item) => (
-            <TabsTrigger key={item.value} value={item.value}>
-              {item.label}
-            </TabsTrigger>
-          ))}
         </TabsList>
 
-        <TabsContent value="comments">
-          <CommentThread
-            comments={timelineComments}
-            queuedComments={queuedComments}
-            linkedRuns={timelineRuns}
+        <TabsContent value="conversation" className="space-y-4">
+          <IssueConversationSurface
             companyId={issue.companyId}
-            projectId={issue.projectId}
-            issueStatus={issue.status}
-            agentMap={agentMap}
-            draftKey={`paperclip:issue-comment-draft:${issue.id}`}
-            enableReassign
-            reassignOptions={commentReassignOptions}
-            currentAssigneeValue={actualAssigneeValue}
-            suggestedAssigneeValue={suggestedAssigneeValue}
-            mentions={mentionOptions}
-            onInterruptQueued={async (runId) => {
-              await interruptQueuedComment.mutateAsync(runId);
-            }}
-            interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
-            onAdd={async (body, reopen, reassignment, commentTargetAgentId) => {
+            liveRuns={liveRuns ?? []}
+            context={executionCommentContext}
+            verbosity={conversationVerbosity}
+            onVerbosityChange={setConversationVerbosity}
+          />
+
+          <IssueConversationComposer
+            onAdd={async (body, reopen, reassignment, commentTargetAgentId, options) => {
               if (reassignment) {
-                await addCommentAndReassign.mutateAsync({ body, reopen, reassignment, commentTargetAgentId });
+                await addCommentAndReassign.mutateAsync({
+                  body,
+                  reopen,
+                  reassignment,
+                  commentTargetAgentId,
+                  ...(options?.interrupt ? { interrupt: true } : {}),
+                });
                 return;
               }
-              await addComment.mutateAsync({ body, reopen, commentTargetAgentId });
+              await addComment.mutateAsync({
+                body,
+                reopen,
+                commentTargetAgentId,
+                ...(options?.interrupt ? { interrupt: true } : {}),
+              });
             }}
             imageUploadHandler={async (file) => {
               const attachment = await uploadAttachment.mutateAsync(file);
@@ -1443,115 +1325,299 @@ export function IssueDetail() {
             onAttachImage={async (file) => {
               await uploadAttachment.mutateAsync(file);
             }}
-            composerStatusSlot={pendingComposerStatus ? (
-              <div
-                className={cn(
-                  "rounded-lg border px-3 py-2 text-xs",
-                  pendingComposerStatus.state === "failed"
-                    ? "border-red-500/30 bg-red-500/[0.06] text-red-900 dark:text-red-100"
-                    : pendingComposerStatus.state === "completed"
-                      ? "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-900 dark:text-emerald-100"
-                      : pendingComposerStatus.state === "running"
-                        ? "border-cyan-500/30 bg-cyan-500/[0.06] text-cyan-900 dark:text-cyan-100"
-                        : "border-amber-500/30 bg-amber-500/[0.06] text-amber-900 dark:text-amber-100"
-                )}
-              >
-                <div className="font-medium">{pendingComposerStatus.title}</div>
-                <div className="mt-1 opacity-90">{pendingComposerStatus.summary}</div>
-                {pendingComposerStatus.detail ? (
-                  <div className="mt-1 opacity-75">{pendingComposerStatus.detail}</div>
-                ) : null}
-              </div>
-            ) : null}
+            composerStatusSlot={pendingComposerStatusCard}
+            enableReassign
+            reassignOptions={commentReassignOptions}
+            currentAssigneeValue={actualAssigneeValue}
+            suggestedAssigneeValue={suggestedAssigneeValue}
+            mentions={mentionOptions}
+            agentMap={agentMap}
           />
         </TabsContent>
 
-        <TabsContent value="subissues">
-          {childIssues.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No sub-issues.</p>
-          ) : (
-            <div className="border border-border rounded-lg divide-y divide-border">
-              {childIssues.map((child) => (
-                <Link
-                  key={child.id}
-                  to={createIssueDetailPath(child.identifier ?? child.id, location.state, location.search)}
-                  state={location.state}
-                  className="flex items-center justify-between px-3 py-2 text-sm hover:bg-accent/20 transition-colors"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <StatusIcon status={child.status} />
-                    <PriorityIcon priority={child.priority} />
-                    <span className="font-mono text-muted-foreground shrink-0">
-                      {child.identifier ?? child.id.slice(0, 8)}
-                    </span>
-                    <span className="truncate">{child.title}</span>
-                  </div>
-                  {child.assigneeAgentId && (() => {
-                    const name = agentMap.get(child.assigneeAgentId)?.name;
-                    return name
-                      ? <Identity name={name} size="sm" />
-                      : <span className="text-muted-foreground font-mono">{child.assigneeAgentId.slice(0, 8)}</span>;
-                  })()}
-                </Link>
-              ))}
-            </div>
-          )}
-        </TabsContent>
+        <TabsContent value="dashboard" className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="space-y-4">
+              <IssueLiveSessionPanel
+                issueId={issueId!}
+                companyId={issue.companyId}
+                atlasExecutionFallback={atlasExecutionPanelModel}
+                chatMessages={atlasNarrativeChatMessages}
+              />
 
-        <TabsContent value="activity">
-          {linkedRuns && linkedRuns.length > 0 && (
-            <div className="mb-3 px-3 py-2 rounded-lg border border-border">
-              <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>
-              {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
-                <div className="text-xs text-muted-foreground">No cost data yet.</div>
+              <PluginSlotOutlet
+                slotTypes={["toolbarButton", "contextMenuItem"]}
+                entityType="issue"
+                context={{
+                  companyId: issue.companyId,
+                  projectId: issue.projectId ?? null,
+                  entityId: issue.id,
+                  entityType: "issue",
+                }}
+                className="flex flex-wrap gap-2"
+                itemClassName="inline-flex"
+                missingBehavior="placeholder"
+              />
+
+              <PluginLauncherOutlet
+                placementZones={["toolbarButton"]}
+                entityType="issue"
+                context={{
+                  companyId: issue.companyId,
+                  projectId: issue.projectId ?? null,
+                  entityId: issue.id,
+                  entityType: "issue",
+                }}
+                className="flex flex-wrap gap-2"
+                itemClassName="inline-flex"
+              />
+
+              <PluginSlotOutlet
+                slotTypes={["taskDetailView"]}
+                entityType="issue"
+                context={{
+                  companyId: issue.companyId,
+                  projectId: issue.projectId ?? null,
+                  entityId: issue.id,
+                  entityType: "issue",
+                }}
+                className="space-y-3"
+                itemClassName="rounded-lg border border-border p-3"
+                missingBehavior="placeholder"
+              />
+            </div>
+
+            <div className="space-y-4">
+              <IssueWorkspaceCard
+                issue={issue}
+                project={orderedProjects.find((p) => p.id === issue.projectId) ?? null}
+                onUpdate={(data) => updateIssue.mutate(data)}
+              />
+            </div>
+          </div>
+
+          <Separator />
+
+          <IssueDocumentsSection
+            issue={issue}
+            canDeleteDocuments={Boolean(session?.user?.id)}
+            mentions={mentionOptions}
+            imageUploadHandler={async (file) => {
+              const attachment = await uploadAttachment.mutateAsync(file);
+              return attachment.contentPath;
+            }}
+            extraActions={!hasAttachments ? attachmentUploadButton : undefined}
+          />
+
+          {hasAttachments ? (
+            <div
+              className={cn("space-y-3 rounded-lg transition-colors")}
+              onDragEnter={(evt) => {
+                evt.preventDefault();
+                setAttachmentDragActive(true);
+              }}
+              onDragOver={(evt) => {
+                evt.preventDefault();
+                setAttachmentDragActive(true);
+              }}
+              onDragLeave={(evt) => {
+                if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
+                setAttachmentDragActive(false);
+              }}
+              onDrop={(evt) => void handleAttachmentDrop(evt)}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
+                {attachmentUploadButton}
+              </div>
+
+              {attachmentError && (
+                <p className="text-xs text-destructive">{attachmentError}</p>
+              )}
+
+              <div className="space-y-2">
+                {attachmentList.map((attachment) => (
+                  <div key={attachment.id} className="border border-border rounded-md p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <a
+                        href={attachment.contentPath}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs hover:underline truncate"
+                        title={attachment.originalFilename ?? attachment.id}
+                      >
+                        {attachment.originalFilename ?? attachment.id}
+                      </a>
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-destructive"
+                        onClick={() => deleteAttachment.mutate(attachment.id)}
+                        disabled={deleteAttachment.isPending}
+                        title="Delete attachment"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
+                    </p>
+                    {isImageAttachment(attachment) && (
+                      <a href={attachment.contentPath} target="_blank" rel="noreferrer">
+                        <img
+                          src={attachment.contentPath}
+                          alt={attachment.originalFilename ?? "attachment"}
+                          className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
+                          loading="lazy"
+                        />
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <Tabs value={detailTab} onValueChange={setDetailTab} className="space-y-3">
+            <TabsList variant="line" className="w-full justify-start gap-1">
+              <TabsTrigger value="comments" className="gap-1.5">
+                <MessageSquare className="h-3.5 w-3.5" />
+                Raw History
+              </TabsTrigger>
+              <TabsTrigger value="subissues" className="gap-1.5">
+                <ListTree className="h-3.5 w-3.5" />
+                Sub-issues
+              </TabsTrigger>
+              <TabsTrigger value="activity" className="gap-1.5">
+                <ActivityIcon className="h-3.5 w-3.5" />
+                Activity
+              </TabsTrigger>
+              {issuePluginTabItems.map((item) => (
+                <TabsTrigger key={item.value} value={item.value}>
+                  {item.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+
+            <TabsContent value="comments">
+              <CommentThread
+                comments={timelineComments}
+                queuedComments={queuedComments}
+                linkedRuns={timelineRuns}
+                companyId={issue.companyId}
+                projectId={issue.projectId}
+                issueStatus={issue.status}
+                agentMap={agentMap}
+                draftKey={`paperclip:issue-comment-draft:${issue.id}`}
+                enableReassign
+                reassignOptions={commentReassignOptions}
+                currentAssigneeValue={actualAssigneeValue}
+                suggestedAssigneeValue={suggestedAssigneeValue}
+                mentions={mentionOptions}
+                onInterruptQueued={async (runId) => {
+                  await interruptQueuedComment.mutateAsync(runId);
+                }}
+                interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
+                onAdd={async () => {}}
+                imageUploadHandler={async (file) => {
+                  const attachment = await uploadAttachment.mutateAsync(file);
+                  return attachment.contentPath;
+                }}
+                onAttachImage={async (file) => {
+                  await uploadAttachment.mutateAsync(file);
+                }}
+                showComposer={false}
+                title="Comments & Runs"
+              />
+            </TabsContent>
+
+            <TabsContent value="subissues">
+              {childIssues.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No sub-issues.</p>
               ) : (
-                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
-                  {issueCostSummary.hasCost && (
-                    <span className="font-medium text-foreground">
-                      ${issueCostSummary.cost.toFixed(4)}
-                    </span>
-                  )}
-                  {issueCostSummary.hasTokens && (
-                    <span>
-                      Tokens {formatTokens(issueCostSummary.totalTokens)}
-                      {issueCostSummary.cached > 0
-                        ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
-                        : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
-                    </span>
+                <div className="border border-border rounded-lg divide-y divide-border">
+                  {childIssues.map((child) => (
+                    <Link
+                      key={child.id}
+                      to={createIssueDetailPath(child.identifier ?? child.id, location.state, location.search)}
+                      state={location.state}
+                      className="flex items-center justify-between px-3 py-2 text-sm hover:bg-accent/20 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <StatusIcon status={child.status} />
+                        <PriorityIcon priority={child.priority} />
+                        <span className="font-mono text-muted-foreground shrink-0">
+                          {child.identifier ?? child.id.slice(0, 8)}
+                        </span>
+                        <span className="truncate">{child.title}</span>
+                      </div>
+                      {child.assigneeAgentId && (() => {
+                        const name = agentMap.get(child.assigneeAgentId)?.name;
+                        return name
+                          ? <Identity name={name} size="sm" />
+                          : <span className="text-muted-foreground font-mono">{child.assigneeAgentId.slice(0, 8)}</span>;
+                      })()}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="activity">
+              {linkedRuns && linkedRuns.length > 0 && (
+                <div className="mb-3 px-3 py-2 rounded-lg border border-border">
+                  <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>
+                  {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
+                    <div className="text-xs text-muted-foreground">No cost data yet.</div>
+                  ) : (
+                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
+                      {issueCostSummary.hasCost && (
+                        <span className="font-medium text-foreground">
+                          ${issueCostSummary.cost.toFixed(4)}
+                        </span>
+                      )}
+                      {issueCostSummary.hasTokens && (
+                        <span>
+                          Tokens {formatTokens(issueCostSummary.totalTokens)}
+                          {issueCostSummary.cached > 0
+                            ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
+                            : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
-            </div>
-          )}
-          {!activity || activity.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No activity yet.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {activity.slice(0, 20).map((evt) => (
-                <div key={evt.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <ActorIdentity evt={evt} agentMap={agentMap} />
-                  <span>{formatAction(evt.action, evt.details)}</span>
-                  <span className="ml-auto shrink-0">{relativeTime(evt.createdAt)}</span>
+              {!activity || activity.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No activity yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {activity.slice(0, 20).map((evt) => (
+                    <div key={evt.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <ActorIdentity evt={evt} agentMap={agentMap} />
+                      <span>{formatAction(evt.action, evt.details)}</span>
+                      <span className="ml-auto shrink-0">{relativeTime(evt.createdAt)}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </TabsContent>
+              )}
+            </TabsContent>
 
-        {activePluginTab && (
-          <TabsContent value={activePluginTab.value}>
-            <PluginSlotMount
-              slot={activePluginTab.slot}
-              context={{
-                companyId: issue.companyId,
-                projectId: issue.projectId ?? null,
-                entityId: issue.id,
-                entityType: "issue",
-              }}
-              missingBehavior="placeholder"
-            />
-          </TabsContent>
-        )}
+            {activePluginTab && (
+              <TabsContent value={activePluginTab.value}>
+                <PluginSlotMount
+                  slot={activePluginTab.slot}
+                  context={{
+                    companyId: issue.companyId,
+                    projectId: issue.projectId ?? null,
+                    entityId: issue.id,
+                    entityType: "issue",
+                  }}
+                  missingBehavior="placeholder"
+                />
+              </TabsContent>
+            )}
+          </Tabs>
+        </TabsContent>
       </Tabs>
 
       {linkedApprovals && linkedApprovals.length > 0 && (

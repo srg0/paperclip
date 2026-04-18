@@ -780,3 +780,36 @@ a.paperclip-project-mention-chip {
 [class*="_toolbarNodeKindSelectContainer_"] {
   z-index: 81 !important;
 }
+
+.codex-issue-surface {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  --codex-surface-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  --codex-surface-border: color-mix(in oklab, var(--border) 86%, transparent);
+  --codex-surface-elevated: color-mix(in oklab, var(--background) 92%, var(--foreground) 8%);
+  --codex-surface-muted: color-mix(in oklab, var(--background) 95%, var(--foreground) 5%);
+  --codex-surface-hover: color-mix(in oklab, var(--accent) 58%, transparent);
+  --codex-surface-link: color-mix(in oklab, var(--foreground) 82%, #58a6ff 18%);
+}
+
+.codex-issue-surface code,
+.codex-issue-surface pre,
+.codex-issue-surface kbd {
+  font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.codex-issue-surface [data-slot="button"] {
+  border-radius: 9999px;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.codex-issue-surface a {
+  color: var(--codex-surface-link);
+}
+
+.codex-issue-surface a:hover {
+  color: var(--foreground);
+}
