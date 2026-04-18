@@ -162,10 +162,11 @@ MR: https://gitlab.kdigital.pro/homio/core/-/merge_requests/273
     expect(turnSummary?.body).toContain("Что доказано:");
     expect(turnSummary?.body).toContain("не доказывает fullscreen gallery");
     expect(turnSummary?.links?.map((link) => link.label)).toEqual(
-      expect.arrayContaining(["Полное описание", "Diff / артефакты", "Комментарий"]),
+      expect.arrayContaining(["Полное описание", "Diff / файлы", "Артефакты / debug", "Комментарий"]),
     );
     expect(turnSummary?.links?.find((link) => link.label === "Полное описание")?.url).toBe("#document-atlas-execution");
-    expect(turnSummary?.links?.find((link) => link.label === "Diff / артефакты")?.url).toBe("#document-atlas-debug-pack");
+    expect(turnSummary?.links?.find((link) => link.label === "Diff / файлы")?.url).toBe("#document-atlas-change-summary");
+    expect(turnSummary?.links?.find((link) => link.label === "Артефакты / debug")?.url).toBe("#document-atlas-debug-pack");
     expect(turnSummary?.links?.find((link) => link.label === "Комментарий")?.url).toContain("#comment-");
     expect(messages.some((message) => message.speaker === "user" && message.body === "норм делай mr")).toBe(true);
     expect(messages.some((message) => message.speaker === "assistant" && message.body.includes("Создал MR"))).toBe(true);

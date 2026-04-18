@@ -227,7 +227,8 @@ function extractImplementationSummary(turn: IssueExecutionTurn): string | null {
 function buildNarrativeLinks(turn: IssueExecutionTurn): IssueNarrativeChatLink[] {
   const links: IssueNarrativeChatLink[] = [
     { label: "Полное описание", url: "#document-atlas-execution" },
-    { label: "Diff / артефакты", url: "#document-atlas-debug-pack" },
+    { label: "Diff / файлы", url: "#document-atlas-change-summary" },
+    { label: "Артефакты / debug", url: "#document-atlas-debug-pack" },
   ];
   if (turn.latestCommentId) {
     links.push({ label: "Комментарий", url: `#comment-${turn.latestCommentId}` });
@@ -302,7 +303,8 @@ function summarizeBridgeCommentForHuman(comment: ParsedBridgeComment, sourceComm
   const proof = humanizeVerifierScope(comment.verifierScope);
   const links: IssueNarrativeChatLink[] = [
     { label: "Полное описание", url: "#document-atlas-execution" },
-    { label: "Diff / артефакты", url: "#document-atlas-debug-pack" },
+    { label: "Diff / файлы", url: "#document-atlas-change-summary" },
+    { label: "Артефакты / debug", url: "#document-atlas-debug-pack" },
   ];
   if (sourceCommentId) links.push({ label: "Комментарий", url: `#comment-${sourceCommentId}` });
   if (comment.standUrl) links.push({ label: "Открыть стенд", url: comment.standUrl });

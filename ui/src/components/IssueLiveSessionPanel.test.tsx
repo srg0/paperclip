@@ -98,7 +98,8 @@ describe("IssueLiveSessionPanel", () => {
               tone: "warn",
               links: [
                 { label: "Полное описание", url: "#document-atlas-execution" },
-                { label: "Diff / артефакты", url: "#document-atlas-debug-pack" },
+                { label: "Diff / файлы", url: "#document-atlas-change-summary" },
+                { label: "Артефакты / debug", url: "#document-atlas-debug-pack" },
                 { label: "Комментарий", url: "#comment-comment-1" },
               ],
             },
@@ -131,7 +132,8 @@ describe("IssueLiveSessionPanel", () => {
     expect(container.textContent).toContain("Сделай fullscreen gallery удобной.");
     expect(container.textContent).toContain("TURN 2: правка доведена до review");
     expect(container.textContent).toContain("Полное описание");
-    expect(container.textContent).toContain("Diff / артефакты");
+    expect(container.textContent).toContain("Diff / файлы");
+    expect(container.textContent).toContain("Артефакты / debug");
     expect(container.textContent).toContain("Комментарий");
     expect(container.textContent).toContain("норм делай mr");
     expect(container.textContent).toContain("Создал MR для этой задачи.");
