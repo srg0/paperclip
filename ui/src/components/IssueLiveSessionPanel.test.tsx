@@ -93,10 +93,14 @@ describe("IssueLiveSessionPanel", () => {
             {
               id: "msg-2",
               speaker: "assistant",
-              body: "Правка дошла до review, но доказательство получилось слишком общим. Автопроверка посмотрела только страницу Project media.",
+              body: "TURN 2: правка доведена до review. Что сделали: Добавил double tap activation. Что доказано: Автопроверка посмотрела только страницу Project media.",
               createdAt: "2026-04-17T10:18:00.000Z",
               tone: "warn",
-              links: [{ label: "Открыть evidence", url: "https://atlas.homio.pro/app/output/example.png" }],
+              links: [
+                { label: "Полное описание", url: "#document-atlas-execution" },
+                { label: "Diff / артефакты", url: "#document-atlas-debug-pack" },
+                { label: "Комментарий", url: "#comment-comment-1" },
+              ],
             },
             {
               id: "msg-3",
@@ -125,7 +129,10 @@ describe("IssueLiveSessionPanel", () => {
     expect(container.textContent).toContain("Chat");
     expect(container.textContent).toContain("Details");
     expect(container.textContent).toContain("Сделай fullscreen gallery удобной.");
-    expect(container.textContent).toContain("Правка дошла до review");
+    expect(container.textContent).toContain("TURN 2: правка доведена до review");
+    expect(container.textContent).toContain("Полное описание");
+    expect(container.textContent).toContain("Diff / артефакты");
+    expect(container.textContent).toContain("Комментарий");
     expect(container.textContent).toContain("норм делай mr");
     expect(container.textContent).toContain("Создал MR для этой задачи.");
 

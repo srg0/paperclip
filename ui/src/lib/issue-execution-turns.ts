@@ -5,6 +5,7 @@ export interface IssueExecutionTurnEvent {
   title: string | null;
   summary: string | null;
   createdAt: string;
+  sourceCommentId: string | null;
 }
 
 export interface IssueExecutionTurn {
@@ -17,6 +18,7 @@ export interface IssueExecutionTurn {
   standUrl: string | null;
   evidenceUrl: string | null;
   outcome: string | null;
+  latestCommentId: string | null;
   events: IssueExecutionTurnEvent[];
 }
 
@@ -44,7 +46,7 @@ export interface IssueNarrativeChatMessage {
 export interface IssueExecutionCommentContextInput {
   issue: Pick<Issue, "title" | "description">;
   comments: Array<
-    Pick<IssueComment, "authorAgentId" | "authorUserId" | "body" | "createdAt">
+    Pick<IssueComment, "id" | "authorAgentId" | "authorUserId" | "body" | "createdAt">
   >;
   projectedTurnNumber?: number | null;
 }
@@ -169,6 +171,7 @@ function makeTurn(sequence: number, request: string | null): IssueExecutionTurn 
     standUrl: null,
     evidenceUrl: null,
     outcome: null,
+    latestCommentId: null,
     events: [],
   };
 }
@@ -190,12 +193,55 @@ function humanizeVerifierScope(scope: string | null): string | null {
   return `Автопроверка проверила сценарий «${cleanMarkdownText(scope ?? "")}».`;
 }
 
+function humanizeOutcome(outcome: string | null): string | null {
+  const normalized = cleanMarkdownText(outcome ?? "").toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes("проверка не прошла") || normalized.includes("с замечаниями")) {
+    return "автопроверка не подтвердила результат";
+  }
+  if (normalized.includes("готова к ревью") || normalized.includes("готово для проверки человеком")) {
+    return "правка доведена до review";
+  }
+  if (normalized.includes("attach-ready") || normalized.includes("взят в работу") || normalized.includes("execution запущен")) {
+    return "задача взята в работу";
+  }
+  return cleanMarkdownText(outcome ?? "");
+}
+
+function extractImplementationSummary(turn: IssueExecutionTurn): string | null {
+  const preferredRoles = ["reporter", "atlas executor", "stand controller"];
+  for (const role of preferredRoles) {
+    const match = [...turn.events]
+      .reverse()
+      .find((event) => event.role.trim().toLowerCase() === role && event.summary);
+    const summary = cleanMarkdownText(match?.summary ?? "");
+    if (summary) return summary;
+  }
+  const fallbackSummary = [...turn.events]
+    .reverse()
+    .map((event) => cleanMarkdownText(event.summary ?? event.title ?? ""))
+    .find(Boolean);
+  return fallbackSummary ?? null;
+}
+
+function buildNarrativeLinks(turn: IssueExecutionTurn): IssueNarrativeChatLink[] {
+  const links: IssueNarrativeChatLink[] = [
+    { label: "Полное описание", url: "#document-atlas-execution" },
+    { label: "Diff / артефакты", url: "#document-atlas-debug-pack" },
+  ];
+  if (turn.latestCommentId) {
+    links.push({ label: "Комментарий", url: `#comment-${turn.latestCommentId}` });
+  }
+  if (turn.standUrl) links.push({ label: "Открыть стенд", url: turn.standUrl });
+  if (turn.evidenceUrl) links.push({ label: "Открыть evidence", url: turn.evidenceUrl });
+  return links;
+}
+
 function summarizeTurnForHuman(turn: IssueExecutionTurn): Omit<IssueNarrativeChatMessage, "id" | "createdAt" | "speaker"> | null {
   const outcome = cleanMarkdownText(turn.outcome ?? "");
   const proof = humanizeVerifierScope(turn.verifierScope);
-  const links: IssueNarrativeChatLink[] = [];
-  if (turn.standUrl) links.push({ label: "Открыть стенд", url: turn.standUrl });
-  if (turn.evidenceUrl) links.push({ label: "Открыть evidence", url: turn.evidenceUrl });
+  const implementation = extractImplementationSummary(turn);
+  const links = buildNarrativeLinks(turn);
 
   if (!outcome && !proof) return null;
 
@@ -203,8 +249,9 @@ function summarizeTurnForHuman(turn: IssueExecutionTurn): Omit<IssueNarrativeCha
   if (lowerOutcome.includes("проверка не прошла") || lowerOutcome.includes("с замечаниями")) {
     return {
       body: compactLines([
-        "Автопроверка не подтвердила результат.",
-        proof,
+        `TURN ${turn.sequence}: ${humanizeOutcome(turn.outcome) ?? "автопроверка не подтвердила результат"}.`,
+        implementation ? `Что сделали: ${implementation}.` : null,
+        proof ? `Что доказано: ${proof}` : null,
       ]),
       tone: "error",
       links,
@@ -215,10 +262,13 @@ function summarizeTurnForHuman(turn: IssueExecutionTurn): Omit<IssueNarrativeCha
     const genericProof = proof?.includes("не доказывает") || proof?.includes("слишком общей");
     return {
       body: compactLines([
-        genericProof
-          ? "Правка дошла до review, но доказательство получилось слишком общим."
-          : "Правка доведена до review.",
-        proof,
+        `TURN ${turn.sequence}: ${humanizeOutcome(turn.outcome) ?? "правка доведена до review"}.`,
+        implementation ? `Что сделали: ${implementation}.` : null,
+        proof
+          ? genericProof
+            ? `Что доказано: ${proof}`
+            : `Что доказано: ${proof}`
+          : null,
       ]),
       tone: genericProof ? "warn" : "success",
       links,
@@ -228,8 +278,8 @@ function summarizeTurnForHuman(turn: IssueExecutionTurn): Omit<IssueNarrativeCha
   if (lowerOutcome.includes("attach-ready") || lowerOutcome.includes("взят в работу") || lowerOutcome.includes("execution запущен")) {
     return {
       body: compactLines([
-        "Задача взята в работу.",
-        turn.standUrl ? `Стенд уже есть: ${turn.standUrl}.` : null,
+        `TURN ${turn.sequence}: ${humanizeOutcome(turn.outcome) ?? "задача взята в работу"}.`,
+        implementation ? `Что сделали: ${implementation}.` : null,
       ]),
       tone: "working",
       links,
@@ -238,18 +288,23 @@ function summarizeTurnForHuman(turn: IssueExecutionTurn): Omit<IssueNarrativeCha
 
   return {
     body: compactLines([
-      outcome || "Есть новое обновление по задаче.",
-      proof,
+      `TURN ${turn.sequence}: ${humanizeOutcome(turn.outcome) ?? "есть новое обновление по задаче"}.`,
+      implementation ? `Что сделали: ${implementation}.` : null,
+      proof ? `Что доказано: ${proof}` : null,
     ]),
     tone: "info",
     links,
   };
 }
 
-function summarizeBridgeCommentForHuman(comment: ParsedBridgeComment): Omit<IssueNarrativeChatMessage, "id" | "createdAt" | "speaker"> | null {
+function summarizeBridgeCommentForHuman(comment: ParsedBridgeComment, sourceCommentId: string | null): Omit<IssueNarrativeChatMessage, "id" | "createdAt" | "speaker"> | null {
   const title = cleanMarkdownText(comment.title ?? "");
   const proof = humanizeVerifierScope(comment.verifierScope);
-  const links: IssueNarrativeChatLink[] = [];
+  const links: IssueNarrativeChatLink[] = [
+    { label: "Полное описание", url: "#document-atlas-execution" },
+    { label: "Diff / артефакты", url: "#document-atlas-debug-pack" },
+  ];
+  if (sourceCommentId) links.push({ label: "Комментарий", url: `#comment-${sourceCommentId}` });
   if (comment.standUrl) links.push({ label: "Открыть стенд", url: comment.standUrl });
   if (comment.evidenceUrl) links.push({ label: "Открыть evidence", url: comment.evidenceUrl });
 
@@ -346,7 +401,9 @@ export function buildIssueExecutionCommentContext(
       title: parsed.title,
       summary: parsed.summary,
       createdAt,
+      sourceCommentId: comment.id,
     });
+    currentTurn.latestCommentId = comment.id;
 
     if (parsed.standUrl) currentTurn.standUrl = parsed.standUrl;
     if (parsed.evidenceUrl) currentTurn.evidenceUrl = parsed.evidenceUrl;
@@ -482,7 +539,7 @@ export function buildIssueNarrativeChatMessages(input: {
       .filter((entry) => entry.parsed)
       .map((entry) => ({
         createdAt: normalizeTimestamp(entry.candidate.createdAt),
-        reply: summarizeBridgeCommentForHuman(entry.parsed!),
+        reply: summarizeBridgeCommentForHuman(entry.parsed!, entry.candidate.id),
       }))
       .filter((entry) => entry.reply)
       .pop();

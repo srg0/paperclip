@@ -317,16 +317,26 @@ function NarrativeChatFlow({ messages }: { messages: IssueNarrativeChatMessage[]
               {message.links?.length ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {message.links.map((link) => (
-                    <a
-                      key={`${message.id}-${link.url}`}
-                      href={link.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs font-medium text-cyan-700 transition-colors hover:border-cyan-500/30 hover:text-cyan-600 dark:text-cyan-300"
-                    >
-                      {link.label}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
+                    link.url.startsWith("#") ? (
+                      <a
+                        key={`${message.id}-${link.url}`}
+                        href={link.url}
+                        className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs font-medium text-cyan-700 transition-colors hover:border-cyan-500/30 hover:text-cyan-600 dark:text-cyan-300"
+                      >
+                        {link.label}
+                      </a>
+                    ) : (
+                      <a
+                        key={`${message.id}-${link.url}`}
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs font-medium text-cyan-700 transition-colors hover:border-cyan-500/30 hover:text-cyan-600 dark:text-cyan-300"
+                      >
+                        {link.label}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )
                   ))}
                 </div>
               ) : null}

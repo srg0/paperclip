@@ -310,14 +310,14 @@ export function IssueExecutionHeader({
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
         </CollapsibleTrigger>
         <CollapsibleContent className="pt-4">
-          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.8fr)]">
             <div className="space-y-3">
               <div className="rounded-xl border border-border/70 bg-background/60 p-4">
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   <GitBranch className="h-3.5 w-3.5" />
                   Flow status
                 </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
                   {summaryChip("Status", model.flowStatus, model.flowSeverity)}
                   {summaryChip("Next step", model.nextStep ?? "Pending projection")}
                 </div>
@@ -328,7 +328,7 @@ export function IssueExecutionHeader({
                   <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Claim vs proof
                   </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
                     {model.requestedChange ? summaryChip("Requested", model.requestedChange) : null}
                     {model.implementationClaim ? summaryChip("Executor said", model.implementationClaim) : null}
                     {model.verifierScope ? summaryChip("Verifier scope", model.verifierScope) : null}

@@ -155,7 +155,18 @@ MR: https://gitlab.kdigital.pro/homio/core/-/merge_requests/273
     });
 
     expect(messages.some((message) => message.speaker === "user" && message.body.includes("Сделай fullscreen gallery"))).toBe(true);
-    expect(messages.some((message) => message.speaker === "assistant" && message.body.includes("не доказывает fullscreen gallery"))).toBe(true);
+    const turnSummary = messages.find(
+      (message) => message.speaker === "assistant" && message.body.includes("Что сделали:"),
+    );
+    expect(turnSummary?.body).toContain("Что сделали:");
+    expect(turnSummary?.body).toContain("Что доказано:");
+    expect(turnSummary?.body).toContain("не доказывает fullscreen gallery");
+    expect(turnSummary?.links?.map((link) => link.label)).toEqual(
+      expect.arrayContaining(["Полное описание", "Diff / артефакты", "Комментарий"]),
+    );
+    expect(turnSummary?.links?.find((link) => link.label === "Полное описание")?.url).toBe("#document-atlas-execution");
+    expect(turnSummary?.links?.find((link) => link.label === "Diff / артефакты")?.url).toBe("#document-atlas-debug-pack");
+    expect(turnSummary?.links?.find((link) => link.label === "Комментарий")?.url).toContain("#comment-");
     expect(messages.some((message) => message.speaker === "user" && message.body === "норм делай mr")).toBe(true);
     expect(messages.some((message) => message.speaker === "assistant" && message.body.includes("Создал MR"))).toBe(true);
     expect(messages.find((message) => message.body.includes("Создал MR"))?.links?.[0]?.url).toContain("/merge_requests/273");
