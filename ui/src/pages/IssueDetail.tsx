@@ -36,6 +36,7 @@ import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
 import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
 import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "../lib/issue-execution-turns";
+import { filterIssueTimelineRuns } from "../lib/issue-run-history";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
@@ -362,15 +363,6 @@ export function IssueDetail() {
     [location.state, location.search],
   );
 
-  // Filter out runs already shown by the live widget to avoid duplication
-  const timelineRuns = useMemo(() => {
-    const liveIds = new Set<string>();
-    for (const r of liveRuns ?? []) liveIds.add(r.id);
-    if (activeRun) liveIds.add(activeRun.id);
-    if (liveIds.size === 0) return linkedRuns ?? [];
-    return (linkedRuns ?? []).filter((r) => !liveIds.has(r.runId));
-  }, [linkedRuns, liveRuns, activeRun]);
-
   const { data: allIssues } = useQuery({
     queryKey: queryKeys.issues.list(selectedCompanyId!),
     queryFn: () => issuesApi.list(selectedCompanyId!),
@@ -420,6 +412,17 @@ export function IssueDetail() {
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
+
+  // Filter out runs already shown by the live widget to avoid duplication
+  const timelineRuns = useMemo(() => {
+    const liveIds = new Set<string>();
+    for (const r of liveRuns ?? []) liveIds.add(r.id);
+    if (activeRun) liveIds.add(activeRun.id);
+    const historicalRuns = liveIds.size === 0
+      ? linkedRuns ?? []
+      : (linkedRuns ?? []).filter((r) => !liveIds.has(r.runId));
+    return filterIssueTimelineRuns(historicalRuns, agents ?? []);
+  }, [linkedRuns, liveRuns, activeRun, agents]);
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
     const options: MentionOption[] = [];
