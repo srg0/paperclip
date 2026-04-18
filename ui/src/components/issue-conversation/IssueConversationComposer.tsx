@@ -31,6 +31,7 @@ interface IssueConversationComposerProps {
   suggestedAssigneeValue?: string;
   mentions?: MentionOption[];
   agentMap?: Map<string, Agent>;
+  draftKey?: string;
 }
 
 interface SlashCommandDefinition {
@@ -104,6 +105,15 @@ function resolveSlashQuery(value: string): string | null {
   return firstToken.slice(1).toLowerCase();
 }
 
+function readComposerDraft(draftKey?: string): string {
+  if (!draftKey) return "";
+  try {
+    return localStorage.getItem(draftKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function IssueConversationComposer({
   onAdd,
   imageUploadHandler,
@@ -115,8 +125,9 @@ export function IssueConversationComposer({
   suggestedAssigneeValue,
   mentions = [],
   agentMap,
+  draftKey,
 }: IssueConversationComposerProps) {
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(() => readComposerDraft(draftKey));
   const [reopen, setReopen] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -128,6 +139,19 @@ export function IssueConversationComposer({
   useEffect(() => {
     setReassignTarget(effectiveSuggestedAssigneeValue);
   }, [effectiveSuggestedAssigneeValue]);
+
+  useEffect(() => {
+    if (!draftKey) return;
+    try {
+      if (body) {
+        localStorage.setItem(draftKey, body);
+      } else {
+        localStorage.removeItem(draftKey);
+      }
+    } catch {
+      // Ignore draft persistence failures.
+    }
+  }, [body, draftKey]);
 
   const slashQuery = resolveSlashQuery(body);
   const slashOptions = slashQuery === null

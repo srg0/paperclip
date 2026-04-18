@@ -1300,6 +1300,7 @@ export function IssueDetail() {
           />
 
           <IssueConversationComposer
+            key={issue.id}
             onAdd={async (body, reopen, reassignment, commentTargetAgentId, options) => {
               if (reassignment) {
                 await addCommentAndReassign.mutateAsync({
@@ -1332,6 +1333,7 @@ export function IssueDetail() {
             suggestedAssigneeValue={suggestedAssigneeValue}
             mentions={mentionOptions}
             agentMap={agentMap}
+            draftKey={`paperclip:issue-comment-draft:${issue.id}`}
           />
         </TabsContent>
 
