@@ -57,6 +57,18 @@ function parseSection(markdown, heading) {
   return match?.[1]?.trim() || null;
 }
 
+function parseSectionValue(markdown, heading) {
+  const section = parseSection(markdown, heading);
+  if (!section) return null;
+  const lines = section
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const first = lines[0].replace(/^-+\s*/, "").trim();
+  return first || null;
+}
+
 function isPlaceholderLike(value) {
   if (!value) return true;
   const normalized = String(value).trim().toLowerCase();
@@ -80,6 +92,20 @@ function assertConcreteField(label, value) {
   }
 }
 
+function looksNoOpText(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return [
+    "no code diff",
+    "no repository changes",
+    "validation-only",
+    "validation only",
+    "deploy scope: none",
+    "mr not required",
+    "already fixed on live",
+  ].some((marker) => normalized.includes(marker));
+}
+
 function normalizeScope(repoUrl, explicitScope) {
   if (explicitScope) return explicitScope;
   if (repoUrl === "ssh://git@gitlab.kdigital.pro:55555/homio/paperclip-control-plane.git") {
@@ -99,14 +125,50 @@ function issueLink(identifier) {
   return `/${prefix}/issues/${identifier}`;
 }
 
+function stripWrappingBackticks(value) {
+  return String(value || "").trim().replace(/^`|`$/g, "");
+}
+
+function parseBundleSectionItems(markdown, heading) {
+  const section = parseSection(markdown, heading);
+  if (!section) return [];
+  return section
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter(Boolean);
+}
+
+function parseExistingIncludedIssues(markdown) {
+  return parseBundleSectionItems(markdown, "Included issue ids")
+    .map((line) => line.match(/`([^`]+)`/)?.[1] || line)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function parseExistingIncludedCommits(markdown) {
+  return parseBundleSectionItems(markdown, "Included commits")
+    .map((line) => line.match(/`([^`]+)`/)?.[1] || line)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
 function buildBundlePlan({
   scope,
-  candidateIdentifier,
-  commitSha,
+  includedIssues,
+  includedCommits,
   verifyTarget,
   expectedBehavior,
   proofKind,
 }) {
+  const normalizedIssues = unique(includedIssues);
+  const normalizedCommits = unique(includedCommits);
+
   const verifyLines = [
     "## Verify Target",
     "",
@@ -116,25 +178,34 @@ function buildBundlePlan({
   ];
 
   return [
-    "## Bundle Plan",
+    "## Scope",
+    `- \`${scope}\``,
     "",
-    `- scope: \`${scope}\``,
-    `- included issue ids: \`${candidateIdentifier}\``,
-    `- included commits: \`${commitSha}\``,
-    "- excluded or rejected candidates:",
-    "  - none",
-    "- deploy order:",
-    "  1. wait for a fresh manual approval comment on this bundle;",
-    "  2. deliver the approved commit to the delivery branch for this scope;",
-    "  3. execute the exact post-deploy verify target from the release-candidate before closure.",
-    `- rollback note: revert \`${commitSha}\` from the delivery branch and re-run the scope verification.`,
-    "- approval state: `pending_manual_approval`",
+    "## Included issue ids",
+    ...normalizedIssues.map((issueIdentifier) => `- \`${issueIdentifier}\``),
+    "",
+    "## Included commits",
+    ...normalizedCommits.map((commit) => `- \`${commit}\``),
+    "",
+    "## Excluded or rejected candidates",
+    "- none",
+    "",
+    "## Deploy order",
+    "1. wait for a fresh manual approval comment on this bundle;",
+    "2. deliver the approved commit(s) to the delivery branch for this scope;",
+    "3. execute the exact post-deploy verify target from the release-candidate before closure.",
+    "",
+    "## Rollback note",
+    `- revert delivered commit(s) \`${normalizedCommits.join(", ")}\` from the delivery branch and re-run the scope verification.`,
+    "",
+    "## Approval state",
+    "- `pending_manual_approval`",
     "",
     ...verifyLines,
     "",
     "## Buffer State",
     "",
-    `- pending entries: \`${candidateIdentifier}\``,
+    `- pending entries: \`${normalizedIssues.join(", ")}\``,
   ].join("\n");
 }
 
@@ -143,10 +214,13 @@ async function main() {
   const candidateDoc = await api(`/api/issues/${encodeURIComponent(issueId)}/documents/release-candidate`);
   const candidateBody = String(candidateDoc.body || "");
 
-  const repoUrl = parseInlineValue(candidateBody, "affected repo");
-  const branchName = parseInlineValue(candidateBody, "branch name");
-  const commitSha = parseInlineValue(candidateBody, "commit sha");
-  const explicitScope = parseInlineValue(candidateBody, "deploy scope");
+  const repoUrl = parseSectionValue(candidateBody, "Affected Repo") || parseInlineValue(candidateBody, "affected repo");
+  const branchName = parseSectionValue(candidateBody, "Branch Name") || parseInlineValue(candidateBody, "branch name");
+  const commitSha = parseSectionValue(candidateBody, "Commit SHA") || parseInlineValue(candidateBody, "commit sha");
+  const explicitScope = parseSectionValue(candidateBody, "Deploy Scope") || parseInlineValue(candidateBody, "deploy scope");
+  const mrStatus = parseSectionValue(candidateBody, "MR URL or Status") || parseInlineValue(candidateBody, "MR URL or status");
+  const riskNotes = parseSectionValue(candidateBody, "Risk Notes") || parseInlineValue(candidateBody, "risk notes");
+  const verificationNotes = parseSection(candidateBody, "Verification notes") || parseSection(candidateBody, "Verification Notes") || "";
   const scope = normalizeScope(repoUrl, explicitScope);
   const candidateIdentifier = String(issue.identifier || issue.id);
   const verifySection = parseSection(candidateBody, "Post-Deploy Verify Target");
@@ -166,6 +240,14 @@ async function main() {
   assertConcreteField("verify target", verifyTarget);
   assertConcreteField("expected restored behavior", expectedBehavior);
   assertConcreteField("proof kind", proofKind);
+  if (
+    looksNoOpText(explicitScope) ||
+    looksNoOpText(mrStatus) ||
+    looksNoOpText(riskNotes) ||
+    looksNoOpText(verificationNotes)
+  ) {
+    throw new Error("release-candidate describes an evidence-only or no-op pass, not a deployable repo change");
+  }
 
   const openIssues = await api(
     `/api/companies/${encodeURIComponent(issue.companyId)}/issues?projectId=${encodeURIComponent(issue.projectId)}&limit=200&status=backlog,todo,in_progress,in_review,blocked`,
@@ -191,10 +273,21 @@ async function main() {
     });
   }
 
+  let existingBundlePlanBody = "";
+  let bundlePlanBaseRevisionId = null;
+  try {
+    const existingBundlePlan = await api(`/api/issues/${encodeURIComponent(bundle.id)}/documents/bundle-plan`);
+    existingBundlePlanBody = String(existingBundlePlan?.body || "");
+    bundlePlanBaseRevisionId = existingBundlePlan?.latestRevisionId || null;
+  } catch {
+    existingBundlePlanBody = "";
+    bundlePlanBaseRevisionId = null;
+  }
+
   const bundlePlanBody = buildBundlePlan({
     scope,
-    candidateIdentifier,
-    commitSha,
+    includedIssues: unique([...parseExistingIncludedIssues(existingBundlePlanBody), candidateIdentifier]),
+    includedCommits: unique([...parseExistingIncludedCommits(existingBundlePlanBody), stripWrappingBackticks(commitSha)]),
     verifyTarget,
     expectedBehavior,
     proofKind,
@@ -208,7 +301,7 @@ async function main() {
       format: "markdown",
       body: bundlePlanBody,
       changeSummary: `Intake ${candidateIdentifier} into ${scope} bundle`,
-      baseRevisionId: null,
+      baseRevisionId: bundlePlanBaseRevisionId,
     }),
   });
 

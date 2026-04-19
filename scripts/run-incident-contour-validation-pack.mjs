@@ -298,7 +298,7 @@ async function wakeMonitor(token) {
 async function listProjectIssues(token, companyId) {
   return api(
     token,
-    `/api/companies/${encodeURIComponent(companyId)}/issues?projectId=${encodeURIComponent(INCIDENT_PROJECT_ID)}&limit=200&status=todo,in_progress,blocked,in_review,done`,
+    `/api/companies/${encodeURIComponent(companyId)}/issues?projectId=${encodeURIComponent(INCIDENT_PROJECT_ID)}&limit=200&status=backlog,todo,in_progress,blocked,in_review,done`,
   );
 }
 
