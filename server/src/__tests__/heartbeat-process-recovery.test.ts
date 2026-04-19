@@ -20,6 +20,7 @@ import { runningProcesses } from "../adapters/index.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
+const itLinuxOnly = process.platform === "linux" ? it : it.skip;
 
 if (!embeddedPostgresSupport.supported) {
   console.warn(
@@ -72,6 +73,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     agentStatus?: "active" | "paused" | "terminated" | "pending_approval";
     runStatus?: "running" | "queued" | "failed";
     processPid?: number | null;
+    processStartedAt?: Date | null;
     processLossRetryCount?: number;
     includeIssue?: boolean;
     runErrorCode?: string | null;
@@ -127,6 +129,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       wakeupRequestId,
       contextSnapshot: input?.includeIssue === false ? {} : { issueId },
       processPid: input?.processPid ?? null,
+      processStartedAt: input?.processStartedAt ?? null,
       processLossRetryCount: input?.processLossRetryCount ?? 0,
       errorCode: input?.runErrorCode ?? null,
       error: input?.runError ?? null,
@@ -210,6 +213,42 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
     expect(issue?.checkoutRunId).toBe(runId);
+  });
+
+  itLinuxOnly("treats an alive pid as lost when the recorded process start time no longer matches", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const { agentId, runId, issueId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      processStartedAt: new Date("2000-01-01T00:00:00.000Z"),
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns();
+    expect(result.reaped).toBe(1);
+    expect(result.runIds).toEqual([runId]);
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(2);
+
+    const failedRun = runs.find((row) => row.id === runId);
+    const retryRun = runs.find((row) => row.id !== runId);
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.errorCode).toBe("process_lost");
+    expect(retryRun?.status).toBe("queued");
+    expect(retryRun?.retryOfRunId).toBe(runId);
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
   });
 
   it("queues exactly one retry for issue-bound process adapters even when the pid was never recorded", async () => {

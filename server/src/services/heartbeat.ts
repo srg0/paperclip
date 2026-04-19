@@ -68,7 +68,9 @@ const DETACHED_PROCESS_ERROR_CODE = "process_detached";
 const startLocksByAgent = new Map<string, Promise<void>>();
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+const PROCESS_START_TIME_MISMATCH_TOLERANCE_MS = 10_000;
 const execFile = promisify(execFileCallback);
+let clockTicksPerSecondPromise: Promise<number> | null = null;
 const SESSIONED_LOCAL_ADAPTERS = new Set([
   "claude_local",
   "codex_local",
@@ -803,6 +805,59 @@ function isProcessAlive(pid: number | null | undefined) {
     if (code === "EPERM") return true;
     if (code === "ESRCH") return false;
     return false;
+  }
+}
+
+async function resolveClockTicksPerSecond() {
+  if (!clockTicksPerSecondPromise) {
+    clockTicksPerSecondPromise = execFile("getconf", ["CLK_TCK"], { encoding: "utf8" })
+      .then(({ stdout }) => {
+        const parsed = Number.parseInt(String(stdout || "").trim(), 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
+      })
+      .catch(() => 100);
+  }
+  return clockTicksPerSecondPromise;
+}
+
+async function readLinuxProcessStartedAt(pid: number) {
+  const statPath = `/proc/${pid}/stat`;
+  const procStat = await fs.readFile(statPath, "utf8");
+  const statSuffixIndex = procStat.lastIndexOf(") ");
+  if (statSuffixIndex < 0) return null;
+  const statFields = procStat.slice(statSuffixIndex + 2).trim().split(/\s+/);
+  if (statFields.length <= 19) return null;
+  const startTicks = Number.parseInt(statFields[19] ?? "", 10);
+  if (!Number.isFinite(startTicks)) return null;
+
+  const systemStat = await fs.readFile("/proc/stat", "utf8");
+  const bootLine = systemStat.split("\n").find((line) => line.startsWith("btime "));
+  if (!bootLine) return null;
+  const bootTimeSeconds = Number.parseInt(bootLine.slice(6).trim(), 10);
+  if (!Number.isFinite(bootTimeSeconds)) return null;
+
+  const ticksPerSecond = await resolveClockTicksPerSecond();
+  const startedAtMs = (bootTimeSeconds + startTicks / ticksPerSecond) * 1000;
+  return Number.isFinite(startedAtMs) ? new Date(startedAtMs) : null;
+}
+
+async function isTrackedProcessStillSame(opts: {
+  pid: number | null | undefined;
+  startedAt: Date | string | null | undefined;
+}) {
+  if (!isProcessAlive(opts.pid)) return false;
+  if (typeof opts.pid !== "number" || !Number.isInteger(opts.pid) || opts.pid <= 0) return false;
+
+  const expectedStartedAt = opts.startedAt ? new Date(opts.startedAt) : null;
+  if (!expectedStartedAt || Number.isNaN(expectedStartedAt.getTime())) return true;
+  if (process.platform !== "linux") return true;
+
+  try {
+    const actualStartedAt = await readLinuxProcessStartedAt(opts.pid);
+    if (!actualStartedAt || Number.isNaN(actualStartedAt.getTime())) return true;
+    return Math.abs(actualStartedAt.getTime() - expectedStartedAt.getTime()) <= PROCESS_START_TIME_MISMATCH_TOLERANCE_MS;
+  } catch {
+    return true;
   }
 }
 
@@ -1891,7 +1946,11 @@ export function heartbeatService(db: Db) {
       }
 
       const tracksLocalChild = isTrackedLocalChildProcessAdapter(adapterType);
-      if (tracksLocalChild && run.processPid && isProcessAlive(run.processPid)) {
+      if (
+        tracksLocalChild &&
+        run.processPid &&
+        await isTrackedProcessStillSame({ pid: run.processPid, startedAt: run.processStartedAt })
+      ) {
         if (run.errorCode !== DETACHED_PROCESS_ERROR_CODE) {
           const detachedMessage = `Lost in-memory process handle, but child pid ${run.processPid} is still alive`;
           const detachedRun = await setRunStatus(run.id, "running", {
