@@ -335,25 +335,47 @@ export async function startServer(): Promise<StartedServer> {
       }
     };
   
-    const runningPid = getRunningPid();
-    if (runningPid) {
-      logger.warn(`Embedded PostgreSQL already running; reusing existing process (pid=${runningPid}, port=${port})`);
-    } else {
-      const configuredAdminConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${configuredPort}/postgres`;
+    const configuredAdminConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${configuredPort}/postgres`;
+    const canReuseConfiguredEmbeddedPostgres = async (): Promise<boolean> => {
       try {
         const actualDataDir = await getPostgresDataDirectory(configuredAdminConnectionString);
         if (
           typeof actualDataDir !== "string" ||
           resolve(actualDataDir) !== resolve(dataDir)
         ) {
-          throw new Error("reachable postgres does not use the expected embedded data directory");
+          return false;
         }
         await ensurePostgresDatabase(configuredAdminConnectionString, "paperclip");
-        logger.warn(
-          `Embedded PostgreSQL appears to already be reachable without a pid file; reusing existing server on configured port ${configuredPort}`,
-        );
+        return true;
       } catch {
-        const detectedPort = await detectPort(configuredPort);
+        return false;
+      }
+    };
+
+    let reuseConfiguredEmbeddedPostgres = false;
+    const runningPid = getRunningPid();
+    if (runningPid) {
+      if (await canReuseConfiguredEmbeddedPostgres()) {
+        logger.warn(`Embedded PostgreSQL already running; reusing existing process (pid=${runningPid}, port=${port})`);
+        reuseConfiguredEmbeddedPostgres = true;
+      } else {
+        logger.warn(
+          `Embedded PostgreSQL pid file points to pid=${runningPid}, but configured port ${configuredPort} is not reachable; treating embedded cluster as stale and restarting it`,
+        );
+        if (existsSync(postmasterPidFile)) {
+          logger.warn("Removing stale embedded PostgreSQL lock file");
+          rmSync(postmasterPidFile, { force: true });
+        }
+      }
+    } else if (await canReuseConfiguredEmbeddedPostgres()) {
+      logger.warn(
+        `Embedded PostgreSQL appears to already be reachable without a pid file; reusing existing server on configured port ${configuredPort}`,
+      );
+      reuseConfiguredEmbeddedPostgres = true;
+    }
+
+    if (!reuseConfiguredEmbeddedPostgres) {
+      const detectedPort = await detectPort(configuredPort);
         if (detectedPort !== configuredPort) {
           logger.warn(`Embedded PostgreSQL port is in use; using next free port (requestedPort=${configuredPort}, selectedPort=${detectedPort})`);
         }
@@ -398,7 +420,6 @@ export async function startServer(): Promise<StartedServer> {
           });
         }
         embeddedPostgresStartedByThisProcess = true;
-      }
     }
   
     const embeddedAdminConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/postgres`;

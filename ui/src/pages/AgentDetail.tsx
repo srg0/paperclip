@@ -566,10 +566,24 @@ export function AgentDetail() {
     enabled: Boolean(resolvedAgentId) && needsDashboardData,
   });
 
-  const { data: heartbeats } = useQuery({
+  const {
+    data: heartbeats,
+    isLoading: heartbeatsLoading,
+    error: heartbeatsError,
+  } = useQuery({
     queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
     enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
+  });
+  const {
+    data: selectedRunHydrated,
+    isLoading: selectedRunHydrating,
+    error: selectedRunHydrateError,
+  } = useQuery<HeartbeatRun>({
+    queryKey: queryKeys.runDetail(urlRunId ?? "__none__"),
+    queryFn: () => heartbeatsApi.get(urlRunId!),
+    enabled: Boolean(urlRunId),
+    retry: false,
   });
 
   const { data: allIssues } = useQuery({
@@ -631,6 +645,31 @@ export function AgentDetail() {
     () => (heartbeats ?? []).find((r) => r.status === "running" || r.status === "queued") ?? null,
     [heartbeats],
   );
+  const runs = useMemo(() => {
+    const baseRuns = heartbeats ?? [];
+    if (!selectedRunHydrated) {
+      return baseRuns;
+    }
+    return baseRuns.some((run) => run.id === selectedRunHydrated.id)
+      ? baseRuns
+      : [selectedRunHydrated, ...baseRuns];
+  }, [heartbeats, selectedRunHydrated]);
+  const runsLoading = (shouldLoadHeartbeats && heartbeatsLoading && !heartbeats)
+    || (Boolean(urlRunId) && selectedRunHydrating && !selectedRunHydrated);
+  const runsErrorMessage = useMemo(() => {
+    const errors = [heartbeatsError, selectedRunHydrateError].filter(Boolean);
+    if (errors.length === 0) {
+      return null;
+    }
+    const first = errors[0];
+    if (first instanceof ApiError) {
+      return first.message;
+    }
+    if (first instanceof Error) {
+      return first.message;
+    }
+    return "Failed to load runs";
+  }, [heartbeatsError, selectedRunHydrateError]);
 
   useEffect(() => {
     if (!agent) return;
@@ -988,7 +1027,7 @@ export function AgentDetail() {
       {activeView === "dashboard" && (
         <AgentOverview
           agent={agent}
-          runs={heartbeats ?? []}
+          runs={runs}
           assignedIssues={assignedIssues}
           runtimeState={runtimeState}
           agentId={agent.id}
@@ -1029,12 +1068,14 @@ export function AgentDetail() {
 
       {activeView === "runs" && (
         <RunsTab
-          runs={heartbeats ?? []}
+          runs={runs}
           companyId={resolvedCompanyId!}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
           selectedRunId={urlRunId ?? null}
           adapterType={agent.adapterType}
+          loading={runsLoading}
+          errorMessage={runsErrorMessage}
         />
       )}
 
@@ -2813,6 +2854,8 @@ function RunsTab({
   agentRouteId,
   selectedRunId,
   adapterType,
+  loading,
+  errorMessage,
 }: {
   runs: HeartbeatRun[];
   companyId: string;
@@ -2820,11 +2863,35 @@ function RunsTab({
   agentRouteId: string;
   selectedRunId: string | null;
   adapterType: string;
+  loading: boolean;
+  errorMessage: string | null;
 }) {
   const { isMobile } = useSidebar();
 
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>Loading runs…</span>
+      </div>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <div className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+        <p className="text-sm font-medium text-destructive">Failed to load runs</p>
+        <p className="text-sm text-muted-foreground break-words">{errorMessage}</p>
+      </div>
+    );
+  }
+
   if (runs.length === 0) {
-    return <p className="text-sm text-muted-foreground">No runs yet.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {selectedRunId ? `Run ${selectedRunId.slice(0, 8)} was not found for this agent.` : "No runs yet."}
+      </p>
+    );
   }
 
   // Sort by created descending
