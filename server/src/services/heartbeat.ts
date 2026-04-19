@@ -3354,8 +3354,18 @@ export function heartbeatService(db: Db) {
             normalizeAgentNameKey(executionAgent?.name);
           const isSameExecutionAgent =
             Boolean(executionAgentNameKey) && executionAgentNameKey === agentNameKey;
+          const wakeReason =
+            readNonEmptyString(enrichedContextSnapshot.wakeReason) ??
+            readNonEmptyString(opts.reason);
+          // Workspace reroutes must always continue in a fresh follow-up run so the
+          // next execution re-resolves workspace/runtime state instead of coalescing
+          // into the currently active execution.
+          const requiresFreshIssueExecution =
+            wakeReason === "workspace_reroute_followup";
           const shouldCoalesceIntoActiveExecution =
-            isSameExecutionAgent && activeExecutionRun.status === "queued";
+            isSameExecutionAgent &&
+            activeExecutionRun.status === "queued" &&
+            !requiresFreshIssueExecution;
 
           if (shouldCoalesceIntoActiveExecution) {
             const mergedContextSnapshot = mergeCoalescedContextSnapshot(

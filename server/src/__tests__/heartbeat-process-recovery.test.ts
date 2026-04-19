@@ -343,6 +343,50 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(wakes.some((row) => row.status === "deferred_issue_execution")).toBe(true);
   });
 
+  it("does not coalesce workspace reroute follow-up into a queued issue execution", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      agentStatus: "active",
+      runStatus: "queued",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const wakeResult = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      contextSnapshot: { issueId },
+      reason: "workspace_reroute_followup",
+      payload: { issueId },
+    });
+
+    expect(wakeResult).toBeNull();
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBe(runId);
+
+    const wakes = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId));
+    expect(
+      wakes.some(
+        (row) =>
+          row.status === "coalesced" &&
+          row.reason === "issue_execution_same_name",
+      ),
+    ).toBe(false);
+    expect(
+      wakes.some(
+        (row) =>
+          row.status === "deferred_issue_execution" &&
+          row.reason === "issue_execution_deferred",
+      ),
+    ).toBe(true);
+  });
+
   it("defers follow-up instead of spawning a new root run while process-loss retry is still pending", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({
       agentStatus: "active",
