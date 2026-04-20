@@ -2,6 +2,13 @@ import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "re
 import { Link, useLocation } from "react-router-dom";
 import type { IssueComment, Agent } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Check, Copy, Paperclip } from "lucide-react";
 import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
@@ -59,6 +66,21 @@ interface CommentThreadProps {
 }
 
 const DRAFT_DEBOUNCE_MS = 800;
+const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled", "completed", "closed", "in_review"]);
+const COMMENT_MODEL_OPTIONS = [
+  { value: "auto", label: "Model: Auto" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+  { value: "gpt-5.2", label: "GPT-5.2" },
+];
+const COMMENT_REASONING_OPTIONS = [
+  { value: "auto", label: "Reasoning: Auto" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+const COMPOSER_META_MARKER = "paperclip-compose";
 
 function loadDraft(draftKey: string): string {
   try {
@@ -103,6 +125,46 @@ function parseReassignment(target: string): CommentReassignment | null {
   return null;
 }
 
+function parseComposerMeta(body: string): {
+  cleanBody: string;
+  model: string | null;
+  reasoning: string | null;
+} {
+  const match = body.match(/^<!--\s*paperclip-compose:\s*(\{[\s\S]*?\})\s*-->\s*/);
+  if (!match) {
+    return { cleanBody: body, model: null, reasoning: null };
+  }
+  try {
+    const parsed = JSON.parse(match[1]) as { model?: unknown; reasoning?: unknown };
+    const model = typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : null;
+    const reasoning =
+      typeof parsed.reasoning === "string" && parsed.reasoning.trim() ? parsed.reasoning.trim() : null;
+    return {
+      cleanBody: body.slice(match[0].length),
+      model,
+      reasoning,
+    };
+  } catch {
+    return { cleanBody: body, model: null, reasoning: null };
+  }
+}
+
+function buildComposerBody(params: {
+  body: string;
+  model: string;
+  reasoning: string;
+}) {
+  const trimmed = params.body.trim();
+  if (!trimmed) return "";
+  if (params.model === "auto" && params.reasoning === "auto") {
+    return trimmed;
+  }
+  return `<!-- ${COMPOSER_META_MARKER}: ${JSON.stringify({
+    model: params.model,
+    reasoning: params.reasoning,
+  })} -->\n${trimmed}`;
+}
+
 function CopyMarkdownButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -140,20 +202,26 @@ function CommentCard({
   const isHighlighted = highlightCommentId === comment.id;
   const isPending = comment.clientStatus === "pending";
   const isQueued = queued || comment.queueState === "queued" || comment.clientStatus === "queued";
+  const composerMeta = parseComposerMeta(comment.body);
+  const surfaceBody = composerMeta.cleanBody.trim() || comment.body;
+  const isAgentMessage = Boolean(comment.authorAgentId);
+  const metaBadges = [composerMeta.model, composerMeta.reasoning].filter(Boolean) as string[];
 
   return (
     <div
       key={comment.id}
       id={`comment-${comment.id}`}
-      className={`border p-3 overflow-hidden min-w-0 rounded-sm transition-colors duration-1000 ${
+      className={`overflow-hidden min-w-0 rounded-2xl border p-4 transition-colors duration-1000 ${
         isQueued
           ? "border-amber-300/70 bg-amber-50/70 dark:border-amber-500/40 dark:bg-amber-500/10"
           : isHighlighted
             ? "border-primary/50 bg-primary/5"
-            : "border-border"
+            : isAgentMessage
+              ? "border-border bg-card"
+              : "border-primary/20 bg-primary/5"
       } ${isPending ? "opacity-80" : ""}`}
     >
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-2 flex items-center justify-between gap-3">
         {comment.authorAgentId ? (
           <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
             <Identity
@@ -164,12 +232,20 @@ function CommentCard({
         ) : (
           <Identity name="You" size="sm" />
         )}
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-1.5 text-xs">
           {isQueued ? (
             <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-100/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-200">
               Queued
             </span>
           ) : null}
+          {metaBadges.map((badge) => (
+            <span
+              key={badge}
+              className="inline-flex items-center rounded-full border border-border/70 bg-accent/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
+            >
+              {badge}
+            </span>
+          ))}
           {companyId && !isPending ? (
             <PluginSlotOutlet
               slotTypes={["commentContextMenuItem"]}
@@ -196,10 +272,10 @@ function CommentCard({
               {formatDateTime(comment.createdAt)}
             </a>
           )}
-          <CopyMarkdownButton text={comment.body} />
+          <CopyMarkdownButton text={surfaceBody} />
         </span>
       </div>
-      <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+      <MarkdownBody className="text-[15px] leading-7">{surfaceBody}</MarkdownBody>
       {companyId && !isPending ? (
         <div className="mt-2 space-y-2">
           <PluginSlotOutlet
@@ -256,40 +332,13 @@ const TimelineList = memo(function TimelineList({
   highlightCommentId?: string | null;
 }) {
   if (timeline.length === 0) {
-    return <p className="text-sm text-muted-foreground">No comments or runs yet.</p>;
+    return <p className="text-sm text-muted-foreground">Пока нет ни одного сообщения.</p>;
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {timeline.map((item) => {
-        if (item.kind === "run") {
-          const run = item.run;
-          return (
-            <div key={`run:${run.runId}`} className="border border-border bg-accent/20 p-3 overflow-hidden min-w-0 rounded-sm">
-              <div className="flex items-center justify-between mb-2">
-                <Link to={`/agents/${run.agentId}`} className="hover:underline">
-                  <Identity
-                    name={agentMap?.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
-                    size="sm"
-                  />
-                </Link>
-                <span className="text-xs text-muted-foreground">
-                  {formatDateTime(run.startedAt ?? run.createdAt)}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Run</span>
-                <Link
-                  to={`/agents/${run.agentId}/runs/${run.runId}`}
-                  className="inline-flex items-center rounded-md border border-border bg-accent/40 px-2 py-1 font-mono text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
-                >
-                  {run.runId.slice(0, 8)}
-                </Link>
-                <StatusBadge status={run.status} />
-              </div>
-            </div>
-          );
-        }
+        if (item.kind === "run") return null;
 
         const comment = item.comment;
         return (
@@ -313,6 +362,7 @@ export function CommentThread({
   linkedRuns = [],
   companyId,
   projectId,
+  issueStatus,
   onAdd,
   agentMap,
   imageUploadHandler,
@@ -328,9 +378,10 @@ export function CommentThread({
   interruptingQueuedRunId = null,
 }: CommentThreadProps) {
   const [body, setBody] = useState("");
-  const [reopen, setReopen] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("auto");
+  const [selectedReasoning, setSelectedReasoning] = useState("auto");
   const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
   const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
@@ -341,24 +392,20 @@ export function CommentThread({
   const hasScrolledRef = useRef(false);
 
   const timeline = useMemo<TimelineItem[]>(() => {
-    const commentItems: TimelineItem[] = comments.map((comment) => ({
-      kind: "comment",
-      id: comment.id,
-      createdAtMs: new Date(comment.createdAt).getTime(),
-      comment,
-    }));
-    const runItems: TimelineItem[] = linkedRuns.map((run) => ({
-      kind: "run",
-      id: run.runId,
-      createdAtMs: new Date(run.startedAt ?? run.createdAt).getTime(),
-      run,
-    }));
-    return [...commentItems, ...runItems].sort((a, b) => {
-      if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
-      if (a.kind === b.kind) return a.id.localeCompare(b.id);
-      return a.kind === "comment" ? -1 : 1;
-    });
-  }, [comments, linkedRuns]);
+    return comments
+      .map((comment) => ({
+        kind: "comment" as const,
+        id: comment.id,
+        createdAtMs: new Date(comment.createdAt).getTime(),
+        comment,
+      }))
+      .sort((a, b) => {
+        if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
+        return a.id.localeCompare(b.id);
+      });
+  }, [comments]);
+
+  const shouldAutoReopen = TERMINAL_ISSUE_STATUSES.has((issueStatus ?? "").toLowerCase());
 
   // Build mention options from agent map (exclude terminated agents)
   const mentions = useMemo<MentionOption[]>(() => {
@@ -419,23 +466,27 @@ export function CommentThread({
   async function handleSubmit() {
     const trimmed = body.trim();
     if (!trimmed) return;
+    const payloadBody = buildComposerBody({
+      body: trimmed,
+      model: selectedModel,
+      reasoning: selectedReasoning,
+    });
     const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
     const reassignment = hasReassignment ? parseReassignment(reassignTarget) : null;
-    const submittedBody = trimmed;
+    const submittedBody = payloadBody;
 
     setSubmitting(true);
     setBody("");
     try {
       // TODO: wire an explicit "send + interrupt" action through the composer if we expose it in the UI.
-      await onAdd(submittedBody, reopen ? true : undefined, reassignment ?? undefined);
+      await onAdd(submittedBody, shouldAutoReopen ? true : undefined, reassignment ?? undefined);
       if (draftKey) clearDraft(draftKey);
-      setReopen(true);
       setReassignTarget(effectiveSuggestedAssigneeValue);
     } catch {
       setBody((current) =>
         restoreSubmittedCommentDraft({
           currentBody: current,
-          submittedBody,
+          submittedBody: trimmed,
         }),
       );
       // Parent mutation handlers surface the failure and the draft is restored for retry.
@@ -464,10 +515,33 @@ export function CommentThread({
   }
 
   const canSubmit = !submitting && !!body.trim();
+  const queueSummary = linkedRuns.length
+    ? `${linkedRuns.length} archived run${linkedRuns.length === 1 ? "" : "s"} moved to History`
+    : null;
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length + queuedComments.length})</h3>
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-border bg-card/60 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-400">Chat</p>
+            <h3 className="text-lg font-semibold">Продолжить задачу</h3>
+            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+              Нормальный рабочий чат без сырых run-строк. Вся техническая телеметрия и архивные turns живут в
+              <strong> History</strong> и <strong>Task Dashboard</strong>.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full border border-border px-3 py-1">{timeline.length} messages</span>
+            {queuedComments.length ? (
+              <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-200">
+                {queuedComments.length} queued
+              </span>
+            ) : null}
+            {queueSummary ? <span className="rounded-full border border-border px-3 py-1">{queueSummary}</span> : null}
+          </div>
+        </div>
+      </div>
 
       {timeline.length > 0 ? (
         <TimelineList
@@ -482,10 +556,10 @@ export function CommentThread({
       {liveRunSlot}
 
       {queuedComments.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-3 rounded-2xl border border-amber-300/30 bg-amber-500/5 p-4">
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-300">
-              Queued Comments ({queuedComments.length})
+            <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300">
+              Очередь follow-up ({queuedComments.length})
             </h4>
             {onInterruptQueued && queuedComments[0]?.queueTargetRunId ? (
               <Button
@@ -515,18 +589,34 @@ export function CommentThread({
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Continue task
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Следующий turn отправится без возврата в raw comments. Assignee остается явным, reopen для terminal
+              статусов делается автоматически.
+            </div>
+          </div>
+          {shouldAutoReopen ? (
+            <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
+              Auto-reopen enabled
+            </span>
+          ) : null}
+        </div>
         <MarkdownEditor
           ref={editorRef}
           value={body}
           onChange={setBody}
-          placeholder="Leave a comment..."
+          placeholder="Опиши следующий шаг, blocker или новый turn для Atlas…"
           mentions={mentions}
           onSubmit={handleSubmit}
           imageUploadHandler={imageUploadHandler}
-          contentClassName="min-h-[60px] text-sm"
+          contentClassName="min-h-[140px] text-[15px] leading-7"
         />
-        <div className="flex items-center justify-end gap-3">
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
           {(imageUploadHandler || onAttachImage) && (
             <div className="mr-auto flex items-center gap-3">
               <input
@@ -547,15 +637,6 @@ export function CommentThread({
               </Button>
             </div>
           )}
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={reopen}
-              onChange={(e) => setReopen(e.target.checked)}
-              className="rounded border-border"
-            />
-            Re-open
-          </label>
           {enableReassign && reassignOptions.length > 0 && (
             <InlineEntitySelector
               value={reassignTarget}
@@ -594,8 +675,32 @@ export function CommentThread({
               }}
             />
           )}
+          <Select value={selectedModel} onValueChange={setSelectedModel}>
+            <SelectTrigger className="min-w-[160px]">
+              <SelectValue placeholder="Model" />
+            </SelectTrigger>
+            <SelectContent>
+              {COMMENT_MODEL_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={selectedReasoning} onValueChange={setSelectedReasoning}>
+            <SelectTrigger className="min-w-[170px]">
+              <SelectValue placeholder="Reasoning" />
+            </SelectTrigger>
+            <SelectContent>
+              {COMMENT_REASONING_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
-            {submitting ? "Posting..." : "Comment"}
+            {submitting ? "Sending..." : "Send"}
           </Button>
         </div>
       </div>

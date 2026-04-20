@@ -3,7 +3,7 @@ import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
-import { activityApi } from "../api/activity";
+import { activityApi, type RunForIssue } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -43,14 +43,12 @@ import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Activity as ActivityIcon,
   Check,
-  ChevronDown,
   ChevronRight,
   Copy,
   EyeOff,
@@ -208,6 +206,74 @@ function ActorIdentity({ evt, agentMap }: { evt: ActivityEvent; agentMap: Map<st
   return <Identity name={id || "Unknown"} size="sm" />;
 }
 
+function formatClockTime(value: string | Date | null | undefined) {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatFullTimeTitle(value: string | Date | null | undefined) {
+  if (!value) return "";
+  return new Date(value).toLocaleString();
+}
+
+function extractRunSummary(run: RunForIssue) {
+  const result = asRecord(run.resultJson);
+  const summary = normalizeHistoryText(result?.summary) ?? normalizeHistoryText(result?.result);
+  if (summary) return truncate(summary, 220);
+  const usage = asRecord(run.usageJson);
+  const totalTokens =
+    usageNumber(usage, "inputTokens", "input_tokens")
+    + usageNumber(usage, "outputTokens", "output_tokens")
+    + usageNumber(usage, "cachedInputTokens", "cached_input_tokens", "cache_read_input_tokens");
+  if (totalTokens > 0) return `Tokens ${formatTokens(totalTokens)}`;
+  return null;
+}
+
+function normalizeHistoryText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function HistoryRunRow({
+  run,
+  agentName,
+}: {
+  run: RunForIssue;
+  agentName: string;
+}) {
+  const startAt = run.startedAt ?? run.createdAt;
+  const endAt = run.finishedAt;
+  const summary = extractRunSummary(run);
+
+  return (
+    <div className="rounded-2xl border border-border bg-card px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Identity name={agentName} size="sm" />
+        <StatusBadge status={run.status} />
+        <Link
+          to={`/agents/${run.agentId}/runs/${run.runId}`}
+          className="font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+        >
+          {run.runId.slice(0, 8)}
+        </Link>
+        <span className="ml-auto text-xs text-muted-foreground" title={formatFullTimeTitle(startAt)}>
+          {formatClockTime(startAt)}
+          {endAt ? ` → ${formatClockTime(endAt)}` : ""}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+        <span>{run.invocationSource.replaceAll("_", " ")}</span>
+        {summary ? <span className="normal-case tracking-normal text-xs text-foreground/80">{summary}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 export function IssueDetail() {
   const { issueId } = useParams<{ issueId: string }>();
   const { selectedCompanyId } = useCompany();
@@ -220,10 +286,9 @@ export function IssueDetail() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
-  const [detailTab, setDetailTab] = useState("comments");
-  const [secondaryOpen, setSecondaryOpen] = useState({
-    approvals: false,
-  });
+  const [detailTab, setDetailTab] = useState("chat");
+  const [dashboardTab, setDashboardTab] = useState("overview");
+  const [historyTab, setHistoryTab] = useState("runs");
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
@@ -347,7 +412,7 @@ export function IssueDetail() {
     })),
     [issuePluginDetailSlots],
   );
-  const activePluginTab = issuePluginTabItems.find((item) => item.value === detailTab) ?? null;
+  const activePluginTab = issuePluginTabItems.find((item) => item.value === dashboardTab) ?? null;
 
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
@@ -511,6 +576,36 @@ export function IssueDetail() {
       hasTokens,
     };
   }, [linkedRuns]);
+
+  const compactRunStatusGroups = useMemo(() => {
+    const grouped = new Map<string, { label: string; count: number }>();
+    for (const run of linkedRuns ?? []) {
+      const agentName = agentMap.get(run.agentId)?.name ?? run.agentId.slice(0, 8);
+      const key = `${agentName}:${run.status}`;
+      const current = grouped.get(key);
+      if (current) {
+        current.count += 1;
+      } else {
+        grouped.set(key, {
+          label: `${agentName} · ${run.status.replaceAll("_", " ")}`,
+          count: 1,
+        });
+      }
+    }
+    return [...grouped.values()]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [agentMap, linkedRuns]);
+
+  const historyRuns = useMemo(
+    () =>
+      [...(linkedRuns ?? [])].sort((a, b) => {
+        const aAt = new Date(a.startedAt ?? a.createdAt).getTime();
+        const bAt = new Date(b.startedAt ?? b.createdAt).getTime();
+        return bAt - aAt;
+      }),
+    [linkedRuns],
+  );
 
   const invalidateIssue = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
@@ -1209,28 +1304,25 @@ export function IssueDetail() {
 
       <Separator />
 
-      <Tabs value={detailTab} onValueChange={setDetailTab} className="space-y-3">
-        <TabsList variant="line" className="w-full justify-start gap-1">
-          <TabsTrigger value="comments" className="gap-1.5">
-            <MessageSquare className="h-3.5 w-3.5" />
-            Comments
-          </TabsTrigger>
-          <TabsTrigger value="subissues" className="gap-1.5">
-            <ListTree className="h-3.5 w-3.5" />
-            Sub-issues
-          </TabsTrigger>
-          <TabsTrigger value="activity" className="gap-1.5">
-            <ActivityIcon className="h-3.5 w-3.5" />
-            Activity
-          </TabsTrigger>
-          {issuePluginTabItems.map((item) => (
-            <TabsTrigger key={item.value} value={item.value}>
-              {item.label}
+      <Tabs value={detailTab} onValueChange={setDetailTab} className="space-y-4">
+        <div className="rounded-2xl border border-border bg-card/80 p-3">
+          <TabsList variant="line" className="w-full justify-start gap-1">
+            <TabsTrigger value="chat" className="gap-1.5">
+              <MessageSquare className="h-3.5 w-3.5" />
+              Chat
             </TabsTrigger>
-          ))}
-        </TabsList>
+            <TabsTrigger value="dashboard" className="gap-1.5">
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Task Dashboard
+            </TabsTrigger>
+            <TabsTrigger value="history" className="gap-1.5">
+              <ActivityIcon className="h-3.5 w-3.5" />
+              History
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-        <TabsContent value="comments">
+        <TabsContent value="chat">
           <CommentThread
             comments={timelineComments}
             queuedComments={queuedComments}
@@ -1267,130 +1359,246 @@ export function IssueDetail() {
           />
         </TabsContent>
 
-        <TabsContent value="subissues">
-          {childIssues.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No sub-issues.</p>
-          ) : (
-            <div className="border border-border rounded-lg divide-y divide-border">
-              {childIssues.map((child) => (
-                <Link
-                  key={child.id}
-                  to={createIssueDetailPath(child.identifier ?? child.id, location.state, location.search)}
-                  state={location.state}
-                  className="flex items-center justify-between px-3 py-2 text-sm hover:bg-accent/20 transition-colors"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <StatusIcon status={child.status} />
-                    <PriorityIcon priority={child.priority} />
-                    <span className="font-mono text-muted-foreground shrink-0">
-                      {child.identifier ?? child.id.slice(0, 8)}
-                    </span>
-                    <span className="truncate">{child.title}</span>
-                  </div>
-                  {child.assigneeAgentId && (() => {
-                    const name = agentMap.get(child.assigneeAgentId)?.name;
-                    return name
-                      ? <Identity name={name} size="sm" />
-                      : <span className="text-muted-foreground font-mono">{child.assigneeAgentId.slice(0, 8)}</span>;
-                  })()}
-                </Link>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="activity">
-          {linkedRuns && linkedRuns.length > 0 && (
-            <div className="mb-3 px-3 py-2 rounded-lg border border-border">
-              <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>
-              {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
-                <div className="text-xs text-muted-foreground">No cost data yet.</div>
-              ) : (
-                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
-                  {issueCostSummary.hasCost && (
-                    <span className="font-medium text-foreground">
-                      ${issueCostSummary.cost.toFixed(4)}
-                    </span>
-                  )}
-                  {issueCostSummary.hasTokens && (
-                    <span>
-                      Tokens {formatTokens(issueCostSummary.totalTokens)}
-                      {issueCostSummary.cached > 0
-                        ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
-                        : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
-                    </span>
-                  )}
+        <TabsContent value="dashboard">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-border bg-card px-4 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Task Dashboard
+                  </p>
+                  <h3 className="text-lg font-semibold text-foreground">
+                    Один обзор по задаче без повторения чата и сырого execution noise.
+                  </h3>
+                  <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+                    Здесь живут статус задачи, proof, plugin panels и инфраструктурные детали. Полный диалог остается в
+                    Chat, а сырой ход событий и runs уезжает в History.
+                  </p>
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  <StatusBadge status={issue.status} />
+                  {hasLiveRuns ? <StatusBadge status="running" /> : null}
+                  {queuedComments.length > 0 ? (
+                    <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
+                      Queue {queuedComments.length}
+                    </span>
+                  ) : null}
+                  {linkedApprovals?.length ? (
+                    <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
+                      Approvals {linkedApprovals.length}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <Tabs value={dashboardTab} onValueChange={setDashboardTab} className="space-y-3">
+              <TabsList variant="line" className="w-full justify-start gap-1">
+                <TabsTrigger value="overview" className="gap-1.5">
+                  <Hexagon className="h-3.5 w-3.5" />
+                  Overview
+                </TabsTrigger>
+                <TabsTrigger value="subissues" className="gap-1.5">
+                  <ListTree className="h-3.5 w-3.5" />
+                  Sub-issues
+                </TabsTrigger>
+                {linkedApprovals && linkedApprovals.length > 0 ? (
+                  <TabsTrigger value="approvals" className="gap-1.5">
+                    <Check className="h-3.5 w-3.5" />
+                    Approvals
+                  </TabsTrigger>
+                ) : null}
+                {issuePluginTabItems.map((item) => (
+                  <TabsTrigger key={item.value} value={item.value}>
+                    {item.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+
+              <TabsContent value="overview" className="space-y-4">
+                {hasLiveRuns ? <LiveRunWidget issueId={issueId!} companyId={issue.companyId} /> : null}
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-border bg-card px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Current state</div>
+                    <div className="mt-2 text-sm font-medium text-foreground">{humanizeValue(issue.status)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-border bg-card px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Runs</div>
+                    <div className="mt-2 text-sm font-medium text-foreground">{linkedRuns?.length ?? 0} total</div>
+                  </div>
+                  <div className="rounded-2xl border border-border bg-card px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Queue</div>
+                    <div className="mt-2 text-sm font-medium text-foreground">{queuedComments.length} follow-ups</div>
+                  </div>
+                  <div className="rounded-2xl border border-border bg-card px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Cost</div>
+                    <div className="mt-2 text-sm font-medium text-foreground">
+                      {issueCostSummary.hasCost ? `$${issueCostSummary.cost.toFixed(4)}` : "No cost data"}
+                    </div>
+                  </div>
+                </div>
+
+                {issuePluginTabItems.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                    Plugin execution panels появятся здесь, когда issue surface plugins подключены.
+                  </div>
+                ) : null}
+              </TabsContent>
+
+              <TabsContent value="subissues">
+                {childIssues.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                    No sub-issues.
+                  </div>
+                ) : (
+                  <div className="overflow-hidden rounded-2xl border border-border bg-card">
+                    {childIssues.map((child) => (
+                      <Link
+                        key={child.id}
+                        to={createIssueDetailPath(child.identifier ?? child.id, location.state, location.search)}
+                        state={location.state}
+                        className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent/20"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <StatusIcon status={child.status} />
+                          <PriorityIcon priority={child.priority} />
+                          <span className="shrink-0 font-mono text-muted-foreground">
+                            {child.identifier ?? child.id.slice(0, 8)}
+                          </span>
+                          <span className="truncate">{child.title}</span>
+                        </div>
+                        {child.assigneeAgentId && (() => {
+                          const name = agentMap.get(child.assigneeAgentId)?.name;
+                          return name
+                            ? <Identity name={name} size="sm" />
+                            : <span className="font-mono text-muted-foreground">{child.assigneeAgentId.slice(0, 8)}</span>;
+                        })()}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+
+              {linkedApprovals && linkedApprovals.length > 0 ? (
+                <TabsContent value="approvals">
+                  <div className="overflow-hidden rounded-2xl border border-border bg-card">
+                    {linkedApprovals.map((approval) => (
+                      <Link
+                        key={approval.id}
+                        to={`/approvals/${approval.id}`}
+                        className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent/20"
+                      >
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={approval.status} />
+                          <span className="font-medium">
+                            {approval.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                          </span>
+                          <span className="font-mono text-muted-foreground">{approval.id.slice(0, 8)}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground" title={formatFullTimeTitle(approval.createdAt)}>
+                          {formatClockTime(approval.createdAt)}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                </TabsContent>
+              ) : null}
+
+              {activePluginTab && (
+                <TabsContent value={activePluginTab.value}>
+                  <PluginSlotMount
+                    slot={activePluginTab.slot}
+                    context={{
+                      companyId: issue.companyId,
+                      projectId: issue.projectId ?? null,
+                      entityId: issue.id,
+                      entityType: "issue",
+                    }}
+                    missingBehavior="placeholder"
+                  />
+                </TabsContent>
               )}
-            </div>
-          )}
-          {!activity || activity.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No activity yet.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {activity.slice(0, 20).map((evt) => (
-                <div key={evt.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <ActorIdentity evt={evt} agentMap={agentMap} />
-                  <span>{formatAction(evt.action, evt.details)}</span>
-                  <span className="ml-auto shrink-0">{relativeTime(evt.createdAt)}</span>
-                </div>
-              ))}
-            </div>
-          )}
+            </Tabs>
+          </div>
         </TabsContent>
 
-        {activePluginTab && (
-          <TabsContent value={activePluginTab.value}>
-            <PluginSlotMount
-              slot={activePluginTab.slot}
-              context={{
-                companyId: issue.companyId,
-                projectId: issue.projectId ?? null,
-                entityId: issue.id,
-                entityType: "issue",
-              }}
-              missingBehavior="placeholder"
-            />
-          </TabsContent>
-        )}
-      </Tabs>
-
-      {linkedApprovals && linkedApprovals.length > 0 && (
-        <Collapsible
-          open={secondaryOpen.approvals}
-          onOpenChange={(open) => setSecondaryOpen((prev) => ({ ...prev, approvals: open }))}
-          className="rounded-lg border border-border"
-        >
-          <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left">
-            <span className="text-sm font-medium text-muted-foreground">
-              Linked Approvals ({linkedApprovals.length})
-            </span>
-            <ChevronDown
-              className={cn("h-4 w-4 text-muted-foreground transition-transform", secondaryOpen.approvals && "rotate-180")}
-            />
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="border-t border-border divide-y divide-border">
-              {linkedApprovals.map((approval) => (
-                <Link
-                  key={approval.id}
-                  to={`/approvals/${approval.id}`}
-                  className="flex items-center justify-between px-3 py-2 text-xs hover:bg-accent/20 transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={approval.status} />
-                    <span className="font-medium">
-                      {approval.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    </span>
-                    <span className="font-mono text-muted-foreground">{approval.id.slice(0, 8)}</span>
-                  </div>
-                  <span className="text-muted-foreground">{relativeTime(approval.createdAt)}</span>
-                </Link>
-              ))}
+        <TabsContent value="history">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-border bg-card px-4 py-4">
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">History</p>
+                <h3 className="text-lg font-semibold text-foreground">Сжатый audit trail без спама одинаковых карточек.</h3>
+                <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+                  История показывает grouped runs и system activity. Чат и dashboard больше не повторяют этот поток.
+                </p>
+              </div>
             </div>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
+
+            <Tabs value={historyTab} onValueChange={setHistoryTab} className="space-y-3">
+              <TabsList variant="line" className="w-full justify-start gap-1">
+                <TabsTrigger value="runs" className="gap-1.5">
+                  <Repeat className="h-3.5 w-3.5" />
+                  Runs
+                </TabsTrigger>
+                <TabsTrigger value="activity" className="gap-1.5">
+                  <ActivityIcon className="h-3.5 w-3.5" />
+                  Activity
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="runs" className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {compactRunStatusGroups.map((group) => (
+                    <div key={group.label} className="rounded-2xl border border-border bg-card px-4 py-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Grouped</div>
+                      <div className="mt-2 text-sm font-medium text-foreground">{group.label}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{group.count} runs</div>
+                    </div>
+                  ))}
+                </div>
+
+                {!historyRuns.length ? (
+                  <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                    No runs yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {historyRuns.slice(0, 30).map((run) => (
+                      <HistoryRunRow
+                        key={run.runId}
+                        run={run}
+                        agentName={agentMap.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="activity" className="space-y-3">
+                {!activity || activity.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                    No activity yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {activity.slice(0, 60).map((evt) => (
+                      <div key={evt.id} className="rounded-2xl border border-border bg-card px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <ActorIdentity evt={evt} agentMap={agentMap} />
+                          <span className="text-sm text-foreground">{formatAction(evt.action, evt.details)}</span>
+                          <span className="ml-auto text-xs text-muted-foreground" title={formatFullTimeTitle(evt.createdAt)}>
+                            {formatClockTime(evt.createdAt)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+        </TabsContent>
+      </Tabs>
 
 
       {/* Mobile properties drawer */}
