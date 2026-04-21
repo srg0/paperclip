@@ -254,11 +254,7 @@ function buildTurnCard(
           ? `Latest result: ${cleanMarkdownText(turn.outcome)}.`
           : null,
     ]) || "Execution is still collecting the next meaningful update.",
-    proofSummary: proof
-      ? `Proof: ${proof}.`
-      : turn.evidenceUrl
-        ? "Proof: durable evidence is available."
-        : null,
+    proofSummary: proof ? `Proof: ${proof}.` : null,
     nextAction: nextActionForTurn(turn, options.isLatest, options.hasActiveLiveRun),
     proofState,
     artifacts: buildArtifacts(turn),
@@ -441,7 +437,7 @@ export function buildIssueConversationModel(input: {
   turns.push(...buildPendingTurnCards(context.pendingUserRequests, hasActiveLiveRun, context.turns.length));
 
   const liveStrip = summarizeLiveRuns(input.liveRuns, input.transcriptByRun);
-  const attention = context.projectionWarning
+  const attention = context.projectionWarning && context.pendingUserRequests.length === 0
     ? {
         title: "Conversation state is ahead of the projection",
         body: context.projectionWarning,

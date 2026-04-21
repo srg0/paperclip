@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
-import { AtSign, GitPullRequestArrow, Paperclip, RotateCcw, Square } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { AtSign, GitPullRequestArrow, Paperclip, Square } from "lucide-react";
 import type { Agent } from "@paperclipai/shared";
 import { AgentIcon } from "../AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "../InlineEntitySelector";
@@ -32,10 +39,11 @@ interface IssueConversationComposerProps {
   mentions?: MentionOption[];
   agentMap?: Map<string, Agent>;
   draftKey?: string;
+  issueStatus?: string | null;
 }
 
 interface SlashCommandDefinition {
-  id: SlashCommandId | "reopen" | "mention" | "attach";
+  id: SlashCommandId | "mention" | "attach";
   label: string;
   command: string;
   description: string;
@@ -61,13 +69,6 @@ const TASK_SLASH_COMMANDS: SlashCommandDefinition[] = [
 
 const COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
-    id: "reopen",
-    label: "Re-open Issue",
-    command: "/reopen",
-    description: "Keeps the issue reopened when you send the next turn.",
-    group: "Composer Controls",
-  },
-  {
     id: "mention",
     label: "Mention Agent Or Project",
     command: "/mention",
@@ -82,6 +83,22 @@ const COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     group: "Composer Controls",
   },
 ];
+
+const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled", "completed", "closed", "in_review"]);
+const COMMENT_MODEL_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+  { value: "gpt-5.2", label: "GPT-5.2" },
+];
+const COMMENT_REASONING_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+const COMPOSER_META_MARKER = "paperclip-compose";
 
 function parseReassignment(target: string): CommentReassignment | null {
   if (!target || target === "__none__") {
@@ -114,6 +131,22 @@ function readComposerDraft(draftKey?: string): string {
   }
 }
 
+function buildComposerBody(params: {
+  body: string;
+  model: string;
+  reasoning: string;
+}) {
+  const trimmed = params.body.trim();
+  if (!trimmed) return "";
+  if (params.model === "auto" && params.reasoning === "auto") {
+    return trimmed;
+  }
+  return `<!-- ${COMPOSER_META_MARKER}: ${JSON.stringify({
+    model: params.model,
+    reasoning: params.reasoning,
+  })} -->\n${trimmed}`;
+}
+
 export function IssueConversationComposer({
   onAdd,
   imageUploadHandler,
@@ -126,15 +159,18 @@ export function IssueConversationComposer({
   mentions = [],
   agentMap,
   draftKey,
+  issueStatus,
 }: IssueConversationComposerProps) {
   const [body, setBody] = useState(() => readComposerDraft(draftKey));
-  const [reopen, setReopen] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("auto");
+  const [selectedReasoning, setSelectedReasoning] = useState("auto");
   const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
   const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const shouldAutoReopen = TERMINAL_ISSUE_STATUSES.has((issueStatus ?? "").toLowerCase());
 
   useEffect(() => {
     setReassignTarget(effectiveSuggestedAssigneeValue);
@@ -157,18 +193,12 @@ export function IssueConversationComposer({
   const slashOptions = slashQuery === null
     ? []
     : [...TASK_SLASH_COMMANDS, ...((imageUploadHandler || onAttachImage || mentions.length > 0 || enableReassign) ? COMPOSER_SLASH_COMMANDS : [])]
-        .filter((command) => {
-          const haystack = `${command.command} ${command.label} ${command.description}`.toLowerCase();
-          return haystack.includes(slashQuery);
-        });
+      .filter((command) => {
+        const haystack = `${command.command} ${command.label} ${command.description}`.toLowerCase();
+        return haystack.includes(slashQuery);
+      });
 
-  async function applyComposerCommand(commandId: "reopen" | "mention" | "attach") {
-    if (commandId === "reopen") {
-      setReopen(true);
-      setBody("");
-      editorRef.current?.focus();
-      return;
-    }
+  async function applyComposerCommand(commandId: "mention" | "attach") {
     if (commandId === "mention") {
       setBody("@");
       editorRef.current?.focus();
@@ -187,14 +217,17 @@ export function IssueConversationComposer({
     setSubmitting(true);
     try {
       if (commandId === "mr") {
-        await onAdd("сделай mr", reopen ? true : undefined, reassignment ?? undefined, directedAgentTargetId);
+        await onAdd("сделай mr", shouldAutoReopen ? true : undefined, reassignment ?? undefined, directedAgentTargetId);
       } else if (commandId === "cancel") {
-        await onAdd("Останови текущий запуск и продолжи с новым turn.", reopen ? true : undefined, reassignment ?? undefined, directedAgentTargetId, {
-          interrupt: true,
-        });
+        await onAdd(
+          "Останови текущий запуск и продолжи с новым turn.",
+          shouldAutoReopen ? true : undefined,
+          reassignment ?? undefined,
+          directedAgentTargetId,
+          { interrupt: true },
+        );
       }
       setBody("");
-      setReopen(true);
       setReassignTarget(effectiveSuggestedAssigneeValue);
     } finally {
       setSubmitting(false);
@@ -220,10 +253,6 @@ export function IssueConversationComposer({
       await submitSlashCommand("cancel");
       return;
     }
-    if (trimmed === "/reopen") {
-      await applyComposerCommand("reopen");
-      return;
-    }
     if (trimmed === "/mention") {
       await applyComposerCommand("mention");
       return;
@@ -241,13 +270,16 @@ export function IssueConversationComposer({
     setSubmitting(true);
     try {
       await onAdd(
-        trimmed,
-        reopen ? true : undefined,
+        buildComposerBody({
+          body: trimmed,
+          model: selectedModel,
+          reasoning: selectedReasoning,
+        }),
+        shouldAutoReopen ? true : undefined,
         reassignment ?? undefined,
         directedAgentTargetId,
       );
       setBody("");
-      setReopen(true);
       setReassignTarget(effectiveSuggestedAssigneeValue);
       editorRef.current?.focus();
     } finally {
@@ -282,8 +314,8 @@ export function IssueConversationComposer({
 
   return (
     <section className="codex-issue-surface rounded-2xl border border-border/70 bg-background/90 p-3.5 shadow-[var(--codex-surface-shadow)]">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
             Continue Task
           </div>
@@ -291,6 +323,11 @@ export function IssueConversationComposer({
             Send the next turn without dropping back into raw issue comments.
           </div>
         </div>
+        {shouldAutoReopen ? (
+          <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-3 py-1 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
+            Auto-reopen enabled
+          </span>
+        ) : null}
       </div>
 
       <div className="space-y-3">
@@ -302,7 +339,7 @@ export function IssueConversationComposer({
           mentions={mentions}
           onSubmit={handleSubmit}
           imageUploadHandler={imageUploadHandler}
-          contentClassName="min-h-[96px] text-sm"
+          contentClassName="min-h-[140px] text-[15px] leading-7"
         />
 
         {slashQuery !== null ? (
@@ -326,8 +363,6 @@ export function IssueConversationComposer({
                             <GitPullRequestArrow className="mt-0.5 h-4 w-4" />
                           ) : command.id === "cancel" ? (
                             <Square className="mt-0.5 h-4 w-4" />
-                          ) : command.id === "reopen" ? (
-                            <RotateCcw className="mt-0.5 h-4 w-4" />
                           ) : command.id === "mention" ? (
                             <AtSign className="mt-0.5 h-4 w-4" />
                           ) : (
@@ -348,28 +383,6 @@ export function IssueConversationComposer({
         ) : null}
 
         {composerStatusSlot}
-
-        <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-          {["/mr", "/cancel", "/reopen", "/mention"].map((command) => (
-            <button
-              key={command}
-              type="button"
-              className="rounded-full border border-border/70 bg-background/60 px-2.5 py-1 transition-colors hover:bg-accent/30"
-              onClick={() => setBody(command)}
-            >
-              {command}
-            </button>
-          ))}
-          {(imageUploadHandler || onAttachImage) ? (
-            <button
-              type="button"
-              className="rounded-full border border-border/70 bg-background/60 px-2.5 py-1 transition-colors hover:bg-accent/30"
-              onClick={() => setBody("/attach")}
-            >
-              /attach
-            </button>
-          ) : null}
-        </div>
 
         {directedAgentOption ? (
           <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] px-3 py-2 text-[11px] text-cyan-900 dark:text-cyan-100">
@@ -398,16 +411,6 @@ export function IssueConversationComposer({
               </Button>
             </div>
           )}
-
-          <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={reopen}
-              onChange={(e) => setReopen(e.target.checked)}
-              className="rounded border-border"
-            />
-            Re-open
-          </label>
 
           {enableReassign && reassignOptions.length > 0 && (
             <InlineEntitySelector
@@ -447,6 +450,32 @@ export function IssueConversationComposer({
               }}
             />
           )}
+
+          <Select value={selectedModel} onValueChange={setSelectedModel}>
+            <SelectTrigger className="h-8 min-w-[150px] text-xs">
+              <SelectValue placeholder="Model" />
+            </SelectTrigger>
+            <SelectContent>
+              {COMMENT_MODEL_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={selectedReasoning} onValueChange={setSelectedReasoning}>
+            <SelectTrigger className="h-8 min-w-[160px] text-xs">
+              <SelectValue placeholder="Reasoning" />
+            </SelectTrigger>
+            <SelectContent>
+              {COMMENT_REASONING_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <Button size="xs" disabled={!canSubmit} onClick={() => void handleSubmit()}>
             {submitting ? "Sending..." : "Send Turn"}

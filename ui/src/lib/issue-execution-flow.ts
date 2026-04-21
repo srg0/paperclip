@@ -113,7 +113,7 @@ type StageDefinition = {
 const STAGES: StageDefinition[] = [
   { key: "orchestrate", label: "Orchestrate", ownerKey: "delivery-orchestrator", ownerLabel: "Delivery Orchestrator" },
   { key: "atlas_execute", label: "Atlas Execute", ownerKey: "atlas-executor", ownerLabel: "Atlas Executor" },
-  { key: "stand_apply", label: "Stand Apply", ownerKey: "stand-controller", ownerLabel: "Stand Controller" },
+  { key: "stand_apply", label: "Apply", ownerKey: "stand-controller", ownerLabel: "Infrastructure" },
   { key: "verify", label: "Verify", ownerKey: "technical-verifier", ownerLabel: "Technical Verifier" },
   { key: "report", label: "Report", ownerKey: "reporter", ownerLabel: "Reporter" },
 ];
@@ -687,7 +687,7 @@ export function buildIssueExecutionHeaderModel(input: {
     flowSeverity: flow.flowSeverity,
     standLabel: inferStandLabel(input.issue, parsed),
     executionStateLabel: parsed.executionState ?? input.issue.status,
-    elapsedLabel: input.activeRun?.startedAt ?? input.issue.startedAt ? "Active now" : null,
+    elapsedLabel: null,
     lastUpdatedAt: parsed.updatedAt ?? String(input.executionDocument?.updatedAt ?? input.issue.updatedAt),
     turnLabel: parsed.turnNumber ? `Turn ${parsed.turnNumber}` : parsed.turnLabel ?? "Turn pending",
     loopLabel: loopCount > 0 ? `Loop ${loopCount}` : "Loop 0",

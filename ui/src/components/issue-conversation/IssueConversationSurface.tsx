@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, PanelsTopLeft, ShieldAlert, Sparkles, Wrench } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, ShieldAlert, Sparkles, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn, relativeTime } from "@/lib/utils";
@@ -148,10 +148,10 @@ function TurnCard({
         <div className="text-sm leading-6 text-foreground">
           {turn.summary}
         </div>
-        {turn.proofSummary ? (
-          <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-[13px] text-muted-foreground">
-            {turn.proofSummary}
-          </div>
+      {turn.proofSummary ? (
+        <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-[13px] text-muted-foreground">
+          {turn.proofSummary}
+        </div>
         ) : null}
         {turn.nextAction ? (
           <div className="rounded-xl border border-dashed border-border/70 px-3 py-2 text-[12px] leading-5 text-muted-foreground">
@@ -224,10 +224,10 @@ export function IssueConversationSurface({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
-            Conversation
+            Chat
           </div>
           <div className="mt-1 text-[13px] text-muted-foreground">
-            The main flow shows the task narrative first and collapses execution noise by default.
+            Human-readable turns first. Heavy execution detail stays in Task Dashboard and History.
           </div>
         </div>
         <div className="flex items-center gap-1 rounded-full border border-border/70 bg-background/80 p-1">
@@ -246,93 +246,64 @@ export function IssueConversationSurface({
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="space-y-4">
+        {model.liveStrip ? (
+          <div
+            className={cn(
+              "rounded-2xl border p-3.5 shadow-[var(--codex-surface-shadow)] animate-in fade-in slide-in-from-bottom-2 duration-500",
+              model.liveStrip.tone === "danger"
+                ? "border-red-500/25 bg-red-500/[0.06]"
+                : model.liveStrip.tone === "warning"
+                  ? "border-amber-500/25 bg-amber-500/[0.06]"
+                  : "border-cyan-500/25 bg-cyan-500/[0.05]",
+            )}
+          >
+            <div className="flex items-start gap-3">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold">{model.liveStrip.title}</div>
+                <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{model.liveStrip.summary}</div>
+                {model.liveStrip.bundles.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {model.liveStrip.bundles.slice(0, model.effectiveVerbosity === "debug" ? undefined : 3).map((bundle) => (
+                      <span key={bundle.id} className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-muted-foreground">
+                        {bundle.label}
+                        {bundle.itemCount ? ` · ${bundle.itemCount}` : ""}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {model.attention ? (
+          <div
+            className={cn(
+              "rounded-2xl border px-3.5 py-3 animate-in fade-in slide-in-from-bottom-2 duration-500",
+              model.attention.tone === "danger"
+                ? "border-red-500/25 bg-red-500/[0.05]"
+                : model.attention.tone === "working"
+                  ? "border-cyan-500/25 bg-cyan-500/[0.04]"
+                  : "border-amber-500/25 bg-amber-500/[0.05]",
+            )}
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <div className="text-[12px] font-semibold">{model.attention.title}</div>
+                <div className="mt-1 text-[12px] leading-6 text-muted-foreground">{model.attention.body}</div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="space-y-4">
-          {model.liveStrip ? (
-            <div
-              className={cn(
-                "rounded-2xl border p-3.5 shadow-[var(--codex-surface-shadow)] animate-in fade-in slide-in-from-bottom-2 duration-500",
-                model.liveStrip.tone === "danger"
-                  ? "border-red-500/25 bg-red-500/[0.06]"
-                  : model.liveStrip.tone === "warning"
-                    ? "border-amber-500/25 bg-amber-500/[0.06]"
-                    : "border-cyan-500/25 bg-cyan-500/[0.05]",
-              )}
-            >
-              <div className="flex items-start gap-3">
-                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />
-                <div className="min-w-0">
-                  <div className="text-[13px] font-semibold">{model.liveStrip.title}</div>
-                  <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{model.liveStrip.summary}</div>
-                  {model.liveStrip.bundles.length > 0 ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {model.liveStrip.bundles.slice(0, model.effectiveVerbosity === "debug" ? undefined : 3).map((bundle) => (
-                        <span key={bundle.id} className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] text-muted-foreground">
-                          {bundle.label}
-                          {bundle.itemCount ? ` · ${bundle.itemCount}` : ""}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {model.attention ? (
-            <div
-              className={cn(
-                "rounded-2xl border p-3.5 animate-in fade-in slide-in-from-bottom-2 duration-500",
-                model.attention.tone === "danger"
-                  ? "border-red-500/25 bg-red-500/[0.06]"
-                  : model.attention.tone === "working"
-                    ? "border-cyan-500/25 bg-cyan-500/[0.05]"
-                    : "border-amber-500/25 bg-amber-500/[0.06]",
-              )}
-            >
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div>
-                  <div className="text-[13px] font-semibold">{model.attention.title}</div>
-                  <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{model.attention.body}</div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="space-y-4">
-            {model.turns.map((turn) => (
-              <TurnCard key={turn.id} turn={turn} verbosity={model.effectiveVerbosity} />
-            ))}
-          </div>
+          {model.turns.map((turn) => (
+            <TurnCard key={turn.id} turn={turn} verbosity={model.effectiveVerbosity} />
+          ))}
         </div>
-
-        <aside className="space-y-4">
-          <div className="rounded-2xl border border-border/70 bg-background/80 p-3.5 shadow-[var(--codex-surface-shadow)]">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              <PanelsTopLeft className="h-3.5 w-3.5" />
-              Current Panels
-            </div>
-            <div className="mt-3 space-y-2.5">
-              <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2.5">
-                <div className="text-[11px] font-medium text-foreground">Surface mode</div>
-                <div className="mt-1 text-[12px] text-muted-foreground">Conversation is the default. Raw logs and controls live in Task Dashboard.</div>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2.5">
-                <div className="text-[11px] font-medium text-foreground">Verbosity</div>
-                <div className="mt-1 text-[12px] text-muted-foreground">{model.effectiveVerbosity === "brief" ? "Healthy tasks stay short." : model.effectiveVerbosity === "debug" ? "Noisy tasks expose more internal bundles." : "Balanced mode keeps the task readable while preserving signal."}</div>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2.5">
-                <div className="text-[11px] font-medium text-foreground">Proof rule</div>
-                <div className="mt-1 text-[12px] text-muted-foreground">Preview links stay live-only. Evidence links are the durable review proof.</div>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2.5">
-                <div className="text-[11px] font-medium text-foreground">Slash panel</div>
-                <div className="mt-1 text-[12px] text-muted-foreground">Use <code>/</code> for merge request, interrupt, reopen, mention, and attach actions.</div>
-              </div>
-            </div>
-          </div>
-        </aside>
       </div>
     </section>
   );

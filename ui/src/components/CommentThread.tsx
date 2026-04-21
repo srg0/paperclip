@@ -67,7 +67,6 @@ interface CommentThreadProps {
 }
 
 const DRAFT_DEBOUNCE_MS = 800;
-
 function loadDraft(draftKey: string): string {
   try {
     return localStorage.getItem(draftKey) ?? "";
@@ -111,6 +110,27 @@ function parseReassignment(target: string): CommentReassignment | null {
   return null;
 }
 
+function parseComposerMeta(body: string): {
+  cleanBody: string;
+  model: string | null;
+  reasoning: string | null;
+} {
+  const match = body.match(/^<!--\s*paperclip-compose:\s*(\{[\s\S]*?\})\s*-->\s*/);
+  if (!match) {
+    return { cleanBody: body, model: null, reasoning: null };
+  }
+  try {
+    const parsed = JSON.parse(match[1]) as { model?: unknown; reasoning?: unknown };
+    return {
+      cleanBody: body.slice(match[0].length),
+      model: typeof parsed.model === "string" && parsed.model.trim() && parsed.model !== "auto" ? parsed.model.trim() : null,
+      reasoning: typeof parsed.reasoning === "string" && parsed.reasoning.trim() && parsed.reasoning !== "auto" ? parsed.reasoning.trim() : null,
+    };
+  } catch {
+    return { cleanBody: body, model: null, reasoning: null };
+  }
+}
+
 function CopyMarkdownButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -148,6 +168,9 @@ function CommentCard({
   const isHighlighted = highlightCommentId === comment.id;
   const isPending = comment.clientStatus === "pending";
   const isQueued = queued || comment.queueState === "queued" || comment.clientStatus === "queued";
+  const composerMeta = parseComposerMeta(comment.body);
+  const surfaceBody = composerMeta.cleanBody.trim() || comment.body;
+  const metaBadges = [composerMeta.model, composerMeta.reasoning].filter(Boolean) as string[];
 
   return (
     <div
@@ -204,10 +227,18 @@ function CommentCard({
               {formatDateTime(comment.createdAt)}
             </a>
           )}
-          <CopyMarkdownButton text={comment.body} />
+          {metaBadges.map((badge) => (
+            <span
+              key={`${comment.id}:${badge}`}
+              className="inline-flex items-center rounded-full border border-border/60 bg-accent/30 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
+            >
+              {badge}
+            </span>
+          ))}
+          <CopyMarkdownButton text={surfaceBody} />
         </span>
       </div>
-      <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+      <MarkdownBody className="text-sm">{surfaceBody}</MarkdownBody>
       {companyId && !isPending ? (
         <div className="mt-2 space-y-2">
           <PluginSlotOutlet

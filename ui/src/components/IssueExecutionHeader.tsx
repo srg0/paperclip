@@ -2,7 +2,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { cn, relativeTime } from "@/lib/utils";
 import type { IssueExecutionHeaderModel, IssueExecutionHeaderStage, IssueExecutionStageState } from "@/lib/issue-execution-flow";
-import { ArrowRight, ChevronDown, ExternalLink, GitBranch, GitCommitHorizontal, RefreshCw, TimerReset } from "lucide-react";
+import { ArrowRight, ChevronDown, ExternalLink, GitBranch, GitCommitHorizontal } from "lucide-react";
 
 function stateClasses(state: IssueExecutionStageState) {
   switch (state) {
@@ -45,6 +45,17 @@ function summaryChip(label: string, value: string, tone: IssueExecutionHeaderMod
       <div className="mt-1 text-sm font-medium leading-5">{value}</div>
     </div>
   );
+}
+
+function formatMilestoneAt(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function stageShellClasses(state: IssueExecutionStageState, active: boolean) {
@@ -135,7 +146,7 @@ function StageDot({ stage, isLast }: { stage: IssueExecutionHeaderStage; isLast:
   const active = stage.state === "running" || stage.state === "retrying" || stage.state === "looping";
   const animated = active || stage.state === "passed";
   return (
-    <div className="flex w-[240px] min-w-[240px] shrink-0 snap-start items-start sm:w-[272px] sm:min-w-[272px]">
+    <div className="flex w-[216px] min-w-[216px] shrink-0 snap-start items-start sm:w-[240px] sm:min-w-[240px]">
       <div className="relative w-full">
         <div className={stageShellClasses(stage.state, active)}>
           {animated ? (
@@ -239,12 +250,6 @@ export function IssueExecutionHeader({
               {model.standLabel}
             </span>
           ) : null}
-          {model.elapsedLabel ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-2.5 py-1 text-xs text-muted-foreground">
-              <TimerReset className="h-3 w-3" />
-              {model.elapsedLabel}
-            </span>
-          ) : null}
           {model.lastUpdatedAt ? (
             <span className="ml-auto text-xs text-muted-foreground">
               Updated {relativeTime(model.lastUpdatedAt)}
@@ -290,21 +295,12 @@ export function IssueExecutionHeader({
         </div>
       </div>
 
-      <div className="grid gap-3 border-b border-border/70 px-4 py-4 sm:grid-cols-2 xl:grid-cols-6 sm:px-5">
-        {summaryChip("Current agent", model.currentAgent)}
-        {summaryChip("Expected next", model.expectedNext)}
-        {summaryChip("Actual next observed", model.actualNextObserved, model.flowSeverity)}
-        {summaryChip("Turn", model.turnLabel)}
-        {summaryChip("Loop", model.loopLabel)}
-        {summaryChip("Retry", model.retryLabel)}
-      </div>
-
       <Collapsible defaultOpen className="px-4 py-4 sm:px-5">
         <CollapsibleTrigger className="flex w-full items-center justify-between text-left">
           <div>
             <div className="text-sm font-semibold text-foreground">Execution drill-down</div>
             <div className="text-xs text-muted-foreground">
-              Next step, recent milestones, and the exact status story for this lineage.
+              Only the compact status story, milestones, and proof links for this lineage.
             </div>
           </div>
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -323,20 +319,6 @@ export function IssueExecutionHeader({
                 </div>
               </div>
 
-              {model.requestedChange || model.implementationClaim || model.verifierScope || model.remainingGap ? (
-                <div className="rounded-xl border border-border/70 bg-background/60 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Claim vs proof
-                  </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
-                    {model.requestedChange ? summaryChip("Requested", model.requestedChange) : null}
-                    {model.implementationClaim ? summaryChip("Executor said", model.implementationClaim) : null}
-                    {model.verifierScope ? summaryChip("Verifier scope", model.verifierScope) : null}
-                    {model.remainingGap ? summaryChip("Still missing", model.remainingGap, "warning") : null}
-                  </div>
-                </div>
-              ) : null}
-
               <div className="rounded-xl border border-border/70 bg-background/60 p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   Recent milestones
@@ -349,7 +331,11 @@ export function IssueExecutionHeader({
                           {milestone.role}
                         </span>
                         <span className="text-sm font-medium text-foreground">{milestone.title}</span>
-                        {milestone.at ? <span className="text-xs text-muted-foreground">{milestone.at}</span> : null}
+                        {milestone.at ? (
+                          <span className="text-xs text-muted-foreground" title={milestone.at}>
+                            {formatMilestoneAt(milestone.at)}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="mt-2 text-sm leading-6 text-muted-foreground">{milestone.summary}</div>
                     </div>
@@ -387,15 +373,13 @@ export function IssueExecutionHeader({
               ) : null}
 
               <div className="rounded-xl border border-border/70 bg-background/60 p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Execution notes
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Compact stats
                 </div>
-                <div className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
-                  <div>Current agent: <span className="font-medium text-foreground">{model.currentAgent}</span></div>
-                  <div>Expected next: <span className="font-medium text-foreground">{model.expectedNext}</span></div>
-                  <div>Actual next observed: <span className="font-medium text-foreground">{model.actualNextObserved}</span></div>
-                  <div>Motion contract: only active stage pulses; completed stages stay static.</div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  {summaryChip("Turn", model.turnLabel)}
+                  {summaryChip("Loop", model.loopLabel)}
+                  {summaryChip("Retry", model.retryLabel)}
                 </div>
               </div>
             </div>
