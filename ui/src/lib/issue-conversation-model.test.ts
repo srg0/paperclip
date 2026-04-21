@@ -100,4 +100,20 @@ describe("buildIssueConversationModel", () => {
     expect(pendingTurn?.summary).toContain("2 earlier messages folded");
     expect(pendingTurn?.nextAction).toContain("2 earlier follow-up messages");
   });
+
+  it("does not invent a queued turn when no live launch exists", () => {
+    const model = buildIssueConversationModel({
+      context: makeContext(),
+      liveRuns: [],
+      transcriptByRun: new Map(),
+      verbosity: "auto",
+    });
+
+    const pendingTurn = model.turns.at(-1);
+    expect(pendingTurn?.turnLabel).toBe("Follow-up");
+    expect(pendingTurn?.status).toBe("waiting");
+    expect(pendingTurn?.statusLabel).toBe("Waiting");
+    expect(pendingTurn?.summary).toContain("No live run yet");
+    expect(pendingTurn?.nextAction).toContain("2 earlier follow-up messages");
+  });
 });

@@ -26,7 +26,7 @@ export interface IssueConversationTurnCard {
   sequence: number;
   turnLabel?: string | null;
   request: string;
-  status: "queued" | "running" | "completed" | "blocked" | "failed";
+  status: "queued" | "running" | "completed" | "blocked" | "failed" | "waiting";
   statusLabel: string;
   tone: "neutral" | "working" | "success" | "warning" | "danger";
   summary: string;
@@ -131,6 +131,8 @@ function statusLabel(status: IssueConversationTurnCard["status"]): string {
   switch (status) {
     case "queued":
       return "Queued";
+    case "waiting":
+      return "Waiting";
     case "running":
       return "Running";
     case "completed":
@@ -329,9 +331,9 @@ function buildPendingTurnCards(
     ? "running"
     : primaryLiveRun?.status === "queued"
       ? "queued"
-      : "queued";
+      : "waiting";
   const liveSummaryParts = [
-    status === "running" ? "Running" : "Starting",
+    status === "running" ? "Running" : status === "queued" ? "Starting" : "No live run yet",
     primaryLiveRun?.turnLabel ?? null,
     primaryLiveRun?.agentName ?? null,
     primaryLiveRun?.slotEnv ? `slot ${primaryLiveRun.slotEnv}` : null,
@@ -343,24 +345,26 @@ function buildPendingTurnCards(
   return [{
     id: "pending-turn-current",
     sequence: primaryLiveRun?.turnNumber ?? (lastSequence + 1),
-    turnLabel: primaryLiveRun?.turnLabel ?? (status === "running" ? "Running" : "Queued"),
+    turnLabel: primaryLiveRun?.turnLabel ?? (status === "running" ? "Running" : status === "queued" ? "Starting" : "Follow-up"),
     request: latestRequest || "Waiting for the newest follow-up request.",
     status,
     statusLabel: statusLabel(status),
-    tone: status === "running" ? "working" : "neutral",
+    tone: status === "running" ? "working" : status === "queued" ? "neutral" : "warning",
     summary: liveSummaryParts.join(" · ") || "Starting",
     proofSummary: null,
     nextAction: hiddenCount > 0
       ? `${hiddenCount} earlier follow-up message${hiddenCount === 1 ? "" : "s"} are folded under the current live launch.`
+      : status === "waiting"
+        ? "The latest follow-up is recorded, but there is still no live launch for it."
       : null,
     proofState: "none",
     artifacts: [],
     phaseBundles: [
       {
         id: "pending-run-current",
-        label: status === "running" ? "Running" : "Starting",
-        status: status === "running" ? "running" : "pending",
-        summary: primaryLiveRun?.turnLabel ?? primaryLiveRun?.agentName ?? "Atlas follow-up",
+        label: status === "running" ? "Running" : status === "queued" ? "Starting" : "Waiting",
+        status: status === "running" ? "running" : status === "queued" ? "pending" : "failed",
+        summary: primaryLiveRun?.turnLabel ?? primaryLiveRun?.agentName ?? "No live run yet",
       },
       ...(hiddenCount > 0
         ? [{

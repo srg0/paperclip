@@ -108,6 +108,80 @@ Atlas принял turn и поднимает workspace для этой зада
     ]);
     expect(context.projectionWarning).toContain("новые user comments");
   });
+
+  it("uses explicit TURN markers from bridge comments so late comments do not collapse back to Turn 1", () => {
+    const context = buildIssueExecutionCommentContext({
+      issue: makeIssue({
+        identifier: "HOM-957",
+        title: "Добавляем HyperFrames в управление контентом",
+        description: "Сделай HyperFrames рабочим в create social post.",
+      }),
+      projectedTurnNumber: 4,
+      comments: [
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Stand Controller -->
+### Stand Controller
+
+**Стенд обновлен**
+
+- Текущий turn: \`TURN 1\`
+- Стенд: https://ai01.homio.pro`, "2026-04-20T04:41:19.228Z"),
+        makeComment("Статус: запускаю новую чистую волну по HyperFrames.", "2026-04-20T06:30:12.974Z", true),
+        makeComment("Статус: продуктовый turn остановлен как platform incident.", "2026-04-20T06:39:20.946Z", true),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Stand Controller -->
+### Stand Controller
+
+**Стенд обновлен**
+
+- Текущий turn: \`TURN 3\`
+- Стенд: https://ai01.homio.pro`, "2026-04-20T07:06:22.610Z"),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Technical Verifier -->
+### Technical Verifier
+
+**Проверка пройдена**
+
+- TURN 3 дошёл до стадии technical verify`, "2026-04-20T07:06:22.654Z"),
+        makeComment("Статус: запускаю новую execution wave после structural fixes.", "2026-04-20T09:16:12.956Z", true),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Technical Verifier -->
+### Technical Verifier
+
+**Проверка пройдена**
+
+- TURN 4 дошёл до стадии technical verify`, "2026-04-20T09:29:51.063Z"),
+        makeComment("Проверь сам через Бэк и пришли ссылку на видео и фото сюда в чат для проверки", "2026-04-20T11:29:49.586Z", true),
+        makeComment("Проверь сам через Бэк и пришли ссылку на видео и фото сюда в чат для проверки", "2026-04-20T11:30:24.782Z", true),
+        makeComment("Статус: возвращаю задачу в активный execution turn по прямому follow-up пользователя.", "2026-04-20T16:14:28.536Z", true),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Reporter -->
+### Reporter
+
+**Итог готов для проверки человеком**
+
+**Коротко:** Прошли 5 итераций правок.
+
+- Turn: \`TURN 5\``, "2026-04-20T16:26:49.827Z"),
+        makeComment("Статус: запускаю новую execution wave после structural fixes.", "2026-04-20T16:31:44.544Z", true),
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Technical Verifier -->
+### Technical Verifier
+
+**Проверка не прошла**
+
+- TURN 6 дошёл до стадии technical verify`, "2026-04-20T16:40:12.424Z"),
+        makeComment("так и где мы теперь?", "2026-04-21T16:54:37.668Z", true),
+      ],
+    });
+
+    expect(context.latestExecutedTurn?.sequence).toBe(6);
+    expect(context.turns).toHaveLength(6);
+    expect(context.turns[2]?.request).toBe("Статус: продуктовый turn остановлен как platform incident.");
+    expect(context.turns[3]?.request).toBe("Статус: запускаю новую execution wave после structural fixes.");
+    expect(context.turns[4]?.request).toBe("Проверь сам через Бэк и пришли ссылку на видео и фото сюда в чат для проверки");
+    expect(context.turns[5]?.request).toBe("Проверь сам через Бэк и пришли ссылку на видео и фото сюда в чат для проверки");
+    expect(context.pendingUserRequests).toEqual([
+      "Статус: возвращаю задачу в активный execution turn по прямому follow-up пользователя.",
+      "Статус: запускаю новую execution wave после structural fixes.",
+      "так и где мы теперь?",
+    ]);
+    expect(context.projectionWarning).toContain("новые user comments");
+  });
 });
 
 describe("buildIssueNarrativeChatMessages", () => {

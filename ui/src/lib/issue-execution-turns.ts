@@ -58,6 +58,7 @@ interface ParsedBridgeComment {
   standUrl: string | null;
   evidenceUrl: string | null;
   verifierScope: string | null;
+  turnNumber: number | null;
 }
 
 interface ParsedMergeRequestComment {
@@ -116,6 +117,22 @@ function extractTurnLineValue(label: string, body: string): string | null {
   return match?.[1] ? cleanMarkdownText(match[1]) : null;
 }
 
+function extractTurnNumber(body: string): number | null {
+  const labeledMatch = /(?:^|\n)\s*[-*]?\s*(?:Текущий\s+turn|Turn|Задача)\s*:\s*`?TURN\s*(\d+)`?/im.exec(body);
+  if (labeledMatch?.[1]) {
+    const parsed = Number.parseInt(labeledMatch[1], 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const genericMatch = /\bTURN\s*(\d+)\b/i.exec(body);
+  if (genericMatch?.[1]) {
+    const parsed = Number.parseInt(genericMatch[1], 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
 function parseBridgeComment(body: string): ParsedBridgeComment | null {
   const role = extractDisplayRole(body);
   if (!role) return null;
@@ -126,6 +143,7 @@ function parseBridgeComment(body: string): ParsedBridgeComment | null {
     standUrl: extractTurnLineValue("Стенд", body) ?? extractTurnLineValue("Preview", body),
     evidenceUrl: extractTurnLineValue("Evidence", body),
     verifierScope: extractTurnLineValue("Что проверено", body),
+    turnNumber: extractTurnNumber(body),
   };
 }
 
@@ -146,7 +164,8 @@ function isPlainUserComment(comment: Pick<IssueComment, "authorAgentId" | "autho
 
 function shouldIgnoreAsOperationalUserComment(body: string): boolean {
   const normalized = cleanMarkdownText(body).toLowerCase();
-  return normalized.startsWith("recovery reroute:");
+  return normalized.startsWith("recovery reroute:")
+    || normalized.startsWith("[instant-chat-smoke ");
 }
 
 function isTurnStartRole(role: string): boolean {
@@ -377,6 +396,16 @@ export function buildIssueExecutionCommentContext(
   const turns: IssueExecutionTurn[] = [makeTurn(1, buildInitialRequest(input.issue))];
   let currentTurn = turns[0];
   const pendingUserRequests: string[] = [];
+  const turnBySequence = new Map<number, IssueExecutionTurn>([[1, currentTurn]]);
+
+  function ensureTurn(sequence: number): IssueExecutionTurn {
+    while (turns.length < sequence) {
+      const nextTurn = makeTurn(turns.length + 1, pendingUserRequests.shift() ?? null);
+      turns.push(nextTurn);
+      turnBySequence.set(nextTurn.sequence, nextTurn);
+    }
+    return turnBySequence.get(sequence)!;
+  }
 
   for (const comment of ordered) {
     if (isPlainUserComment(comment)) {
@@ -389,31 +418,38 @@ export function buildIssueExecutionCommentContext(
     const parsed = parseBridgeComment(comment.body);
     if (!parsed) continue;
 
-    if (isTurnStartRole(parsed.role) && currentTurn.events.length > 0 && pendingUserRequests.length > 0) {
+    let targetTurn = currentTurn;
+
+    if (parsed.turnNumber && parsed.turnNumber > 0) {
+      targetTurn = ensureTurn(parsed.turnNumber);
+      if (targetTurn.sequence > currentTurn.sequence) {
+        currentTurn.status = currentTurn.settledAt ? "settled" : currentTurn.status;
+        currentTurn = targetTurn;
+      }
+    } else if (isTurnStartRole(parsed.role) && currentTurn.events.length > 0 && pendingUserRequests.length > 0) {
       currentTurn.status = currentTurn.settledAt ? "settled" : currentTurn.status;
-      const nextRequest = pendingUserRequests.shift() ?? null;
-      currentTurn = makeTurn(turns.length + 1, nextRequest);
-      turns.push(currentTurn);
+      currentTurn = ensureTurn(turns.length + 1);
+      targetTurn = currentTurn;
     }
 
     const createdAt = normalizeTimestamp(comment.createdAt);
-    currentTurn.startedAt ??= createdAt;
-    currentTurn.events.push({
+    targetTurn.startedAt ??= createdAt;
+    targetTurn.events.push({
       role: parsed.role,
       title: parsed.title,
       summary: parsed.summary,
       createdAt,
       sourceCommentId: comment.id,
     });
-    currentTurn.latestCommentId = comment.id;
+    targetTurn.latestCommentId = comment.id;
 
-    if (parsed.standUrl) currentTurn.standUrl = parsed.standUrl;
-    if (parsed.evidenceUrl) currentTurn.evidenceUrl = parsed.evidenceUrl;
-    if (parsed.verifierScope) currentTurn.verifierScope = parsed.verifierScope;
-    if (parsed.title) currentTurn.outcome = parsed.title;
+    if (parsed.standUrl) targetTurn.standUrl = parsed.standUrl;
+    if (parsed.evidenceUrl) targetTurn.evidenceUrl = parsed.evidenceUrl;
+    if (parsed.verifierScope) targetTurn.verifierScope = parsed.verifierScope;
+    if (parsed.title) targetTurn.outcome = parsed.title;
     if (isSettledRole(parsed.role)) {
-      currentTurn.settledAt = createdAt;
-      currentTurn.status = "settled";
+      targetTurn.settledAt = createdAt;
+      targetTurn.status = "settled";
     }
   }
 

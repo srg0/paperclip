@@ -59,6 +59,8 @@ function statusBadgeClasses(status: IssueConversationTurnCard["status"]) {
       return "border-red-500/25 bg-red-500/[0.08] text-red-800 dark:text-red-200";
     case "queued":
       return "border-border/70 bg-background/70 text-muted-foreground";
+    case "waiting":
+      return "border-amber-500/25 bg-amber-500/[0.08] text-amber-800 dark:text-amber-200";
     case "blocked":
       return "border-amber-500/25 bg-amber-500/[0.08] text-amber-800 dark:text-amber-200";
     default:
