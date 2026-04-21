@@ -24,6 +24,7 @@ export interface IssueConversationPhaseBundle {
 export interface IssueConversationTurnCard {
   id: string;
   sequence: number;
+  turnLabel?: string | null;
   request: string;
   status: "queued" | "running" | "completed" | "blocked" | "failed";
   statusLabel: string;
@@ -243,6 +244,7 @@ function buildTurnCard(
   return {
     id: `turn-${turn.sequence}`,
     sequence: turn.sequence,
+    turnLabel: `Turn ${turn.sequence}`,
     request: cleanMarkdownText(turn.request) || "No explicit request recorded for this turn.",
     status,
     statusLabel: statusLabel(status),
@@ -263,39 +265,115 @@ function buildTurnCard(
   };
 }
 
+interface PrimaryLiveRunMeta {
+  status: "queued" | "running";
+  turnNumber: number | null;
+  turnLabel: string | null;
+  agentName: string;
+  slotEnv: string | null;
+}
+
+function parseLiveTurnNumber(run: LiveRunForIssue): number | null {
+  const triggerDetail = cleanMarkdownText(run.triggerDetail ?? "");
+  const explicit = /turn(?:[\s_-]+)?(\d+)/i.exec(triggerDetail);
+  if (explicit?.[1]) {
+    const parsed = Number.parseInt(explicit[1], 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const idMatch = /-t(\d+)-/i.exec(run.id);
+  if (idMatch?.[1]) {
+    const parsed = Number.parseInt(idMatch[1], 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function parseLiveTurnLabel(run: LiveRunForIssue): string | null {
+  const triggerDetail = cleanMarkdownText(run.triggerDetail ?? "");
+  if (triggerDetail) return triggerDetail.toUpperCase().startsWith("TURN ") ? triggerDetail : triggerDetail;
+  const turnNumber = parseLiveTurnNumber(run);
+  return turnNumber !== null ? `TURN ${turnNumber}` : null;
+}
+
+function selectPrimaryLiveRun(liveRuns: LiveRunForIssue[]): PrimaryLiveRunMeta | null {
+  const active = [...liveRuns]
+    .filter((run) => run.status === "running" || run.status === "queued")
+    .sort((a, b) => {
+      const aTime = new Date(a.startedAt ?? a.createdAt).getTime();
+      const bTime = new Date(b.startedAt ?? b.createdAt).getTime();
+      if (a.status !== b.status) {
+        return a.status === "running" ? -1 : 1;
+      }
+      return bTime - aTime;
+    })[0];
+  if (!active) return null;
+  return {
+    status: active.status === "running" ? "running" : "queued",
+    turnNumber: parseLiveTurnNumber(active),
+    turnLabel: parseLiveTurnLabel(active),
+    agentName: cleanMarkdownText(active.agentName ?? "") || "Atlas Executor",
+    slotEnv: cleanMarkdownText(active.slotEnv ?? "") || null,
+  };
+}
+
 function buildPendingTurnCards(
   pendingUserRequests: string[],
-  hasActiveLiveRun: boolean,
+  primaryLiveRun: PrimaryLiveRunMeta | null,
   lastSequence: number,
 ): IssueConversationTurnCard[] {
-  return pendingUserRequests.map((request, index) => {
-    const isFirst = index === 0;
-    const status: IssueConversationTurnCard["status"] = hasActiveLiveRun && isFirst ? "running" : "queued";
-    return {
-      id: `pending-turn-${index + 1}`,
-      sequence: lastSequence + index + 1,
-      request: cleanMarkdownText(request),
-      status,
-      statusLabel: statusLabel(status),
-      tone: hasActiveLiveRun && isFirst ? "working" : "neutral",
-      summary: hasActiveLiveRun && isFirst
-        ? "Thinking"
-        : "Starting",
-      proofSummary: null,
-      nextAction: null,
-      proofState: "none",
-      artifacts: [],
-      phaseBundles: hasActiveLiveRun && isFirst
+  if (pendingUserRequests.length === 0) return [];
+
+  const latestRequest = cleanMarkdownText(pendingUserRequests[pendingUserRequests.length - 1] ?? "");
+  const hiddenCount = Math.max(0, pendingUserRequests.length - 1);
+  const status: IssueConversationTurnCard["status"] = primaryLiveRun?.status === "running"
+    ? "running"
+    : primaryLiveRun?.status === "queued"
+      ? "queued"
+      : "queued";
+  const liveSummaryParts = [
+    status === "running" ? "Running" : "Starting",
+    primaryLiveRun?.turnLabel ?? null,
+    primaryLiveRun?.agentName ?? null,
+    primaryLiveRun?.slotEnv ? `slot ${primaryLiveRun.slotEnv}` : null,
+  ].filter(Boolean);
+  if (hiddenCount > 0) {
+    liveSummaryParts.push(`${hiddenCount} earlier messages folded`);
+  }
+
+  return [{
+    id: "pending-turn-current",
+    sequence: primaryLiveRun?.turnNumber ?? (lastSequence + 1),
+    turnLabel: primaryLiveRun?.turnLabel ?? (status === "running" ? "Running" : "Queued"),
+    request: latestRequest || "Waiting for the newest follow-up request.",
+    status,
+    statusLabel: statusLabel(status),
+    tone: status === "running" ? "working" : "neutral",
+    summary: liveSummaryParts.join(" · ") || "Starting",
+    proofSummary: null,
+    nextAction: hiddenCount > 0
+      ? `${hiddenCount} earlier follow-up message${hiddenCount === 1 ? "" : "s"} are folded under the current live launch.`
+      : null,
+    proofState: "none",
+    artifacts: [],
+    phaseBundles: [
+      {
+        id: "pending-run-current",
+        label: status === "running" ? "Running" : "Starting",
+        status: status === "running" ? "running" : "pending",
+        summary: primaryLiveRun?.turnLabel ?? primaryLiveRun?.agentName ?? "Atlas follow-up",
+      },
+      ...(hiddenCount > 0
         ? [{
-            id: `pending-run-${index + 1}`,
-            label: "Thinking",
-            status: "running",
-            summary: "Live execution in progress.",
+            id: "pending-run-folded-messages",
+            label: "Messages",
+            status: "pending" as const,
+            summary: `${hiddenCount} earlier follow-up message${hiddenCount === 1 ? "" : "s"} folded`,
+            itemCount: hiddenCount,
           }]
-        : [],
-      updatedAt: null,
-    };
-  });
+        : []),
+    ],
+    updatedAt: null,
+  }];
 }
 
 function summarizeLiveRuns(
@@ -303,6 +381,7 @@ function summarizeLiveRuns(
   transcriptByRun: Map<string, TranscriptEntry[]>,
 ): IssueConversationLiveStrip | null {
   if (liveRuns.length === 0) return null;
+  const primaryLiveRun = selectPrimaryLiveRun(liveRuns);
 
   let commandCount = 0;
   let toolCount = 0;
@@ -360,7 +439,9 @@ function summarizeLiveRuns(
 
   const tone = errorCount > 0 ? "danger" : commandCount + toolCount + thinkingCount > 0 ? "working" : "warning";
   const summary = [
-    `${liveRuns.length} run${liveRuns.length === 1 ? "" : "s"}`,
+    primaryLiveRun?.turnLabel ?? `${liveRuns.length} run${liveRuns.length === 1 ? "" : "s"}`,
+    primaryLiveRun?.agentName ?? null,
+    primaryLiveRun?.slotEnv ? `slot ${primaryLiveRun.slotEnv}` : null,
     commandCount > 0 ? `${commandCount} commands` : null,
     toolCount > 0 ? `${toolCount} tools` : null,
     thinkingCount > 0 ? `${thinkingCount} thinking` : null,
@@ -418,6 +499,7 @@ export function buildIssueConversationModel(input: {
   }
 
   const hasActiveLiveRun = input.liveRuns.some((run) => run.status === "queued" || run.status === "running");
+  const primaryLiveRun = selectPrimaryLiveRun(input.liveRuns);
   const effectiveVerbosity = resolveEffectiveVerbosity({
     preference: input.verbosity,
     hasActiveLiveRun,
@@ -432,7 +514,7 @@ export function buildIssueConversationModel(input: {
       hasActiveLiveRun,
     }),
   );
-  turns.push(...buildPendingTurnCards(context.pendingUserRequests, hasActiveLiveRun, context.turns.length));
+  turns.push(...buildPendingTurnCards(context.pendingUserRequests, primaryLiveRun, context.turns.length));
 
   const liveStrip = summarizeLiveRuns(input.liveRuns, input.transcriptByRun);
   const attention = context.projectionWarning && context.pendingUserRequests.length === 0

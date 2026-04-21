@@ -137,7 +137,7 @@ function TurnCard({
               {turn.statusLabel}
             </Badge>
             <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Turn {turn.sequence}
+              {turn.turnLabel ?? `Turn ${turn.sequence}`}
             </span>
             {turn.updatedAt ? (
               <span className="text-xs text-muted-foreground">

@@ -254,9 +254,10 @@ function fromRunQueuedEvent(
   if (!issueId || !issueRefs.has(issueId)) return null;
 
   const agentLabel = resolveAgentLabel(agents, readString(payload.agentId));
-  const summary = agentLabel;
+  const turnLabel = readString(payload.triggerDetail) ?? readString(payload.turnLabel) ?? null;
+  const summary = [turnLabel, agentLabel].filter(Boolean).join(" · ") || agentLabel;
   return {
-    signal: buildSignal("queued", event.createdAt, "Starting", summary, null, null),
+    signal: buildSignal("queued", event.createdAt, "Starting", summary, null, turnLabel),
     feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, "Starting", summary, "working"),
   };
 }
@@ -274,19 +275,20 @@ function fromRunStatusEvent(
   const agentLabel = resolveAgentLabel(agents, readString(payload.agentId));
   const status = readString(payload.status)?.toLowerCase() ?? "updated";
   const detail = readString(payload.error) ?? readString(payload.errorCode) ?? readString(payload.triggerDetail);
+  const turnLabel = readString(payload.triggerDetail) ?? readString(payload.turnLabel) ?? null;
 
   if (status === "running") {
-    const summary = agentLabel;
+    const summary = [turnLabel, agentLabel].filter(Boolean).join(" · ") || agentLabel;
     return {
-      signal: buildSignal("running", event.createdAt, "Running", summary, null, null),
+      signal: buildSignal("running", event.createdAt, "Running", summary, null, turnLabel),
       feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, "Running", summary, "working"),
     };
   }
 
   if (status === "succeeded") {
-    const summary = agentLabel;
+    const summary = [turnLabel, agentLabel].filter(Boolean).join(" · ") || agentLabel;
     return {
-      signal: buildSignal("completed", event.createdAt, "Done", summary, null, null),
+      signal: buildSignal("completed", event.createdAt, "Done", summary, null, turnLabel),
       feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, "Done", summary, "success"),
     };
   }

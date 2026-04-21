@@ -113,6 +113,7 @@ describe("normalizeIssueChatLiveEvent", () => {
         payload: {
           issueId: ISSUE.id,
           agentId: "agent-atlas",
+          triggerDetail: "TURN 3",
         },
       }),
     });
@@ -126,16 +127,20 @@ describe("normalizeIssueChatLiveEvent", () => {
           issueId: ISSUE.id,
           agentId: "agent-atlas",
           status: "running",
+          triggerDetail: "TURN 3",
         },
       }),
     });
 
     expect(queued?.signal?.state).toBe("queued");
     expect(queued?.signal?.title).toBe("Starting");
+    expect(queued?.signal?.turnLabel).toBe("TURN 3");
+    expect(queued?.feedItem?.summary).toContain("TURN 3");
     expect(running?.signal?.state).toBe("running");
     expect(running?.signal?.title).toBe("Running");
+    expect(running?.signal?.turnLabel).toBe("TURN 3");
     expect(running?.feedItem?.title).toBe("Running");
-    expect(running?.feedItem?.summary).toBe("Atlas Executor");
+    expect(running?.feedItem?.summary).toContain("TURN 3");
   });
 
   it("maps run log chunks into live feed output", () => {

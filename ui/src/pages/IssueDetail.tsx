@@ -433,11 +433,24 @@ export function IssueDetail() {
       context: executionCommentContext,
     });
   }, [comments, executionCommentContext, issue]);
+  const latestLiveRun = useMemo(
+    () => [...(liveRuns ?? [])]
+      .filter((run) => run.status === "running" || run.status === "queued")
+      .sort((a, b) => {
+        const aTime = new Date(a.startedAt ?? a.createdAt).getTime();
+        const bTime = new Date(b.startedAt ?? b.createdAt).getTime();
+        if (a.status !== b.status) {
+          return a.status === "running" ? -1 : 1;
+        }
+        return bTime - aTime;
+      })[0] ?? null,
+    [liveRuns],
+  );
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
         ? activeRun
-        : (liveRuns ?? []).find((run) => run.status === "running" && !isSyntheticAtlasRun(run)) ?? null
+        : (liveRuns ?? []).find((run) => run.status === "running") ?? null
     ),
     [activeRun, liveRuns],
   );
@@ -688,11 +701,16 @@ export function IssueDetail() {
     const latestExecutedTurn = executionCommentContext?.latestExecutedTurn ?? null;
     const latestRequest = latestExecutedTurn?.request ?? null;
     const pendingRequests = executionCommentContext?.pendingUserRequests ?? [];
+    const liveSummary = latestLiveRun
+      ? `Сейчас Atlas уже выполняет ${latestLiveRun.triggerDetail ?? "новый turn"}${latestLiveRun.slotEnv ? ` в слоте ${latestLiveRun.slotEnv}` : ""}.`
+      : null;
     const summaryParts = [
       latestRequest ? `Последний исполненный запрос: «${latestRequest}».` : null,
       baseModel.summary,
       pendingRequests.length > 0
-        ? `После этого появились новые user comments (${pendingRequests.length}), поэтому текущая projection уже не отвечает на самый свежий запрос.`
+        ? latestLiveRun
+          ? liveSummary
+          : `После этого появились новые user comments (${pendingRequests.length}), поэтому текущая projection уже не отвечает на самый свежий запрос.`
         : null,
     ].filter(Boolean);
     return {
@@ -700,40 +718,66 @@ export function IssueDetail() {
       requestedChange: latestRequest,
       summary: summaryParts.join(" "),
       turnLabel: latestExecutedTurn ? `Turn ${latestExecutedTurn.sequence}` : baseModel.turnLabel,
-      flowStatus: executionCommentContext?.projectionWarning ? "Projection stale" : baseModel.flowStatus,
-      flowSeverity: executionCommentContext?.projectionWarning ? "warning" : baseModel.flowSeverity,
-      mismatchText: executionCommentContext?.projectionWarning ?? baseModel.mismatchText,
+      flowStatus: executionCommentContext?.projectionWarning && !latestLiveRun ? "Projection stale" : baseModel.flowStatus,
+      flowSeverity: executionCommentContext?.projectionWarning && !latestLiveRun ? "warning" : baseModel.flowSeverity,
+      mismatchText: executionCommentContext?.projectionWarning && !latestLiveRun ? executionCommentContext.projectionWarning : baseModel.mismatchText,
     };
-  }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents, executionCommentContext]);
+  }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents, executionCommentContext, latestLiveRun]);
   const issueChatLiveTransport = useIssueChatLiveTransport({
     companyId: issue?.companyId ?? null,
     issue: issue ? { id: issue.id, identifier: issue.identifier } : null,
     agents: agents ?? null,
   });
   const effectivePendingComposerStatus = useMemo(() => {
-    if (!pendingAtlasFollowup) return null;
-    return buildPendingAtlasFollowupStatus({
-      pendingSince: pendingAtlasFollowup.submittedAt,
-      baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
-      parsed: parsedExecutionDocument,
-      dispatch: {
-        status: pendingAtlasFollowup.dispatchStatus,
-        requestType: pendingAtlasFollowup.requestType,
-        detail: pendingAtlasFollowup.detail,
-        turnNumber: pendingAtlasFollowup.turnNumber,
-        turnLabel: pendingAtlasFollowup.turnLabel,
-      },
-      live: issueChatLiveTransport.signal
-        ? {
-          state: issueChatLiveTransport.signal.state,
-          title: issueChatLiveTransport.signal.title,
-          summary: issueChatLiveTransport.signal.summary,
-          detail: issueChatLiveTransport.signal.detail,
-          turnLabel: issueChatLiveTransport.signal.turnLabel,
-        }
-        : null,
-    });
-  }, [issueChatLiveTransport.signal, parsedExecutionDocument, pendingAtlasFollowup]);
+    if (pendingAtlasFollowup) {
+      return buildPendingAtlasFollowupStatus({
+        pendingSince: pendingAtlasFollowup.submittedAt,
+        baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
+        parsed: parsedExecutionDocument,
+        dispatch: {
+          status: pendingAtlasFollowup.dispatchStatus,
+          requestType: pendingAtlasFollowup.requestType,
+          detail: pendingAtlasFollowup.detail,
+          turnNumber: pendingAtlasFollowup.turnNumber,
+          turnLabel: pendingAtlasFollowup.turnLabel,
+        },
+        live: issueChatLiveTransport.signal
+          ? {
+            state: issueChatLiveTransport.signal.state,
+            title: issueChatLiveTransport.signal.title,
+            summary: issueChatLiveTransport.signal.summary,
+            detail: issueChatLiveTransport.signal.detail,
+            turnLabel: issueChatLiveTransport.signal.turnLabel,
+          }
+          : null,
+      });
+    }
+
+    if (issueChatLiveTransport.signal) {
+      return {
+        state: issueChatLiveTransport.signal.state,
+        title: issueChatLiveTransport.signal.title,
+        summary: issueChatLiveTransport.signal.summary,
+        detail: issueChatLiveTransport.signal.detail,
+        turnLabel: issueChatLiveTransport.signal.turnLabel,
+      };
+    }
+
+    if (latestLiveRun) {
+      const triggerDetail = latestLiveRun.triggerDetail?.trim() || null;
+      const slotDetail = latestLiveRun.slotEnv ? `slot ${latestLiveRun.slotEnv}` : null;
+      const liveState: "running" | "queued" = latestLiveRun.status === "running" ? "running" : "queued";
+      return {
+        state: liveState,
+        title: liveState === "running" ? "Running" : "Starting",
+        summary: [triggerDetail, latestLiveRun.agentName].filter(Boolean).join(" · ") || "Atlas Executor",
+        detail: slotDetail,
+        turnLabel: triggerDetail,
+      };
+    }
+
+    return null;
+  }, [issueChatLiveTransport.signal, latestLiveRun, parsedExecutionDocument, pendingAtlasFollowup]);
   const pendingComposerStatusCard = effectivePendingComposerStatus ? (
     <div
       className={cn(
