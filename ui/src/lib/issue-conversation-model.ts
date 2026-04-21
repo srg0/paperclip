@@ -334,7 +334,7 @@ function summarizeLiveRuns(
         id: `${run.id}-commands`,
         label: "Commands",
         status: runErrorCount > 0 ? "failed" : "running",
-        summary: `${runCommandCount} command${runCommandCount === 1 ? "" : "s"} executed or grouped in the current live run.`,
+        summary: `${runCommandCount} command${runCommandCount === 1 ? "" : "s"}`,
         itemCount: runCommandCount,
       });
     }
@@ -343,16 +343,16 @@ function summarizeLiveRuns(
         id: `${run.id}-tools`,
         label: "Tools",
         status: runErrorCount > 0 ? "failed" : "running",
-        summary: `${runToolCount} tool call${runToolCount === 1 ? "" : "s"} are part of the active execution path.`,
+        summary: `${runToolCount} tool${runToolCount === 1 ? "" : "s"}`,
         itemCount: runToolCount,
       });
     }
     if (runThinkingCount > 0) {
       bundles.push({
         id: `${run.id}-thinking`,
-        label: "Reasoning",
+        label: "Thinking",
         status: "running",
-        summary: `${runThinkingCount} reasoning update${runThinkingCount === 1 ? "" : "s"} have been collapsed into the current live strip.`,
+        summary: `${runThinkingCount} thinking`,
         itemCount: runThinkingCount,
       });
     }
