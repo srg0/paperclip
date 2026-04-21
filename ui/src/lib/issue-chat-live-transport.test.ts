@@ -45,9 +45,11 @@ describe("normalizeIssueChatLiveEvent", () => {
 
     expect(update?.signal).toMatchObject({
       state: "accepted",
+      title: "Thinking",
       turnLabel: "TURN 7",
     });
-    expect(update?.feedItem?.title).toContain("TURN 7");
+    expect(update?.feedItem?.title).toBe("Thinking");
+    expect(update?.feedItem?.summary).toBe("TURN 7");
   });
 
   it("maps accepted directed-agent activity into a live signal", () => {
@@ -71,7 +73,8 @@ describe("normalizeIssueChatLiveEvent", () => {
     });
 
     expect(update?.signal?.state).toBe("accepted");
-    expect(update?.feedItem?.title).toBe("Atlas Executor принял сообщение");
+    expect(update?.feedItem?.title).toBe("Thinking");
+    expect(update?.feedItem?.summary).toBe("Atlas Executor");
   });
 
   it("maps blocked follow-up activity into a blocked live signal", () => {
@@ -94,8 +97,10 @@ describe("normalizeIssueChatLiveEvent", () => {
 
     expect(update?.signal).toMatchObject({
       state: "blocked",
+      title: "Blocked",
       turnLabel: "TURN 8",
     });
+    expect(update?.feedItem?.title).toBe("Blocked");
     expect(update?.feedItem?.summary).toContain("Bridge worker is not running");
   });
 
@@ -126,8 +131,11 @@ describe("normalizeIssueChatLiveEvent", () => {
     });
 
     expect(queued?.signal?.state).toBe("queued");
+    expect(queued?.signal?.title).toBe("Starting");
     expect(running?.signal?.state).toBe("running");
-    expect(running?.feedItem?.title).toContain("Atlas Executor");
+    expect(running?.signal?.title).toBe("Running");
+    expect(running?.feedItem?.title).toBe("Running");
+    expect(running?.feedItem?.summary).toBe("Atlas Executor");
   });
 
   it("maps run log chunks into live feed output", () => {

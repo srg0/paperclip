@@ -157,16 +157,12 @@ function fromActivityEvent(
 
   if (action === "issue.followup_requested") {
     const targetAgentLabel = resolveTargetAgentLabel(agents, details, readString(payload.agentId));
-    const title = requestType === "directed_agent"
-      ? `${targetAgentLabel} принял сообщение`
-      : turnLabel ? `${turnLabel} принят в работу` : `${agentLabel} принял follow-up`;
+    const title = "Thinking";
     const summary = requestType === "directed_agent"
-      ? `${targetAgentLabel} получил directed follow-up и должен ответить в этом чате.`
-      : turnLabel
-        ? `${agentLabel} получил новый follow-up и начинает следующий turn.`
-        : "Новый follow-up принят и готовится к запуску.";
+      ? targetAgentLabel
+      : turnLabel ?? agentLabel;
     return {
-      signal: buildSignal("accepted", event.createdAt, title, summary, readString(details?.detail), turnLabel),
+      signal: buildSignal("accepted", event.createdAt, title, summary, null, turnLabel),
       feedItem: buildFeedItem(`activity:${event.id}`, event.createdAt, title, summary, "working"),
     };
   }
@@ -181,21 +177,15 @@ function fromActivityEvent(
       signal: buildSignal(
         "blocked",
         event.createdAt,
-        requestType === "directed_agent"
-          ? `${targetAgentLabel} не принял сообщение`
-          : turnLabel ? `${turnLabel} не был отправлен` : "Follow-up заблокирован",
+        "Blocked",
         error,
-        requestType === "directed_agent"
-          ? "Direct agent dispatch не дошёл до выбранного агента, поэтому живой ответ не стартовал."
-          : "Direct follow-up dispatch не дошёл до Atlas, поэтому новый turn не стартовал.",
+        null,
         turnLabel,
       ),
       feedItem: buildFeedItem(
         `activity:${event.id}`,
         event.createdAt,
-        requestType === "directed_agent"
-          ? `${targetAgentLabel} заблокирован`
-          : turnLabel ? `${turnLabel} заблокирован` : "Follow-up заблокирован",
+        "Blocked",
         error,
         "danger",
       ),
@@ -264,10 +254,10 @@ function fromRunQueuedEvent(
   if (!issueId || !issueRefs.has(issueId)) return null;
 
   const agentLabel = resolveAgentLabel(agents, readString(payload.agentId));
-  const summary = `${agentLabel} поставлен в очередь и ждёт фактического старта run.`;
+  const summary = agentLabel;
   return {
-    signal: buildSignal("queued", event.createdAt, `${agentLabel} в очереди`, summary, readString(payload.triggerDetail), null),
-    feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, `${agentLabel} в очереди`, summary, "working"),
+    signal: buildSignal("queued", event.createdAt, "Starting", summary, null, null),
+    feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, "Starting", summary, "working"),
   };
 }
 
@@ -286,26 +276,26 @@ function fromRunStatusEvent(
   const detail = readString(payload.error) ?? readString(payload.errorCode) ?? readString(payload.triggerDetail);
 
   if (status === "running") {
-    const summary = `${agentLabel} уже исполняет запрос и держит run в active state.`;
+    const summary = agentLabel;
     return {
-      signal: buildSignal("running", event.createdAt, `${agentLabel} выполняет запрос`, summary, detail, null),
-      feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, `${agentLabel} выполняет запрос`, summary, "working"),
+      signal: buildSignal("running", event.createdAt, "Running", summary, null, null),
+      feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, "Running", summary, "working"),
     };
   }
 
   if (status === "succeeded") {
-    const summary = `${agentLabel} довёл run до terminal success state.`;
+    const summary = agentLabel;
     return {
-      signal: buildSignal("completed", event.createdAt, `${agentLabel} завершил run`, summary, detail, null),
-      feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, `${agentLabel} завершил run`, summary, "success"),
+      signal: buildSignal("completed", event.createdAt, "Done", summary, null, null),
+      feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, "Done", summary, "success"),
     };
   }
 
   if (status === "failed" || status === "timed_out" || status === "cancelled") {
-    const summary = detail ?? `${agentLabel} завершил run неуспешно.`;
+    const summary = detail ?? agentLabel;
     return {
-      signal: buildSignal("failed", event.createdAt, `${agentLabel} не завершил run`, summary, detail, null),
-      feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, `${agentLabel} не завершил run`, summary, "danger"),
+      signal: buildSignal("failed", event.createdAt, "Failed", summary, null, null),
+      feedItem: buildFeedItem(`run:${event.id}`, event.createdAt, "Failed", summary, "danger"),
     };
   }
 

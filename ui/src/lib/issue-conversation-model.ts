@@ -279,20 +279,18 @@ function buildPendingTurnCards(
       statusLabel: statusLabel(status),
       tone: hasActiveLiveRun && isFirst ? "working" : "neutral",
       summary: hasActiveLiveRun && isFirst
-        ? "Paperclip already accepted the newer request and is compressing the in-flight work into the current execution narrative."
-        : "This follow-up is recorded and will become the next task turn when execution resumes.",
+        ? "Thinking"
+        : "Starting",
       proofSummary: null,
-      nextAction: hasActiveLiveRun && isFirst
-        ? "Wait for the next semantic execution update instead of scanning raw agent chatter."
-        : "No new execution has started for this request yet.",
+      nextAction: null,
       proofState: "none",
       artifacts: [],
       phaseBundles: hasActiveLiveRun && isFirst
         ? [{
             id: `pending-run-${index + 1}`,
-            label: "Execution",
+            label: "Thinking",
             status: "running",
-            summary: "Follow-up work is now in progress.",
+            summary: "Live execution in progress.",
           }]
         : [],
       updatedAt: null,
@@ -361,17 +359,17 @@ function summarizeLiveRuns(
   }
 
   const tone = errorCount > 0 ? "danger" : commandCount + toolCount + thinkingCount > 0 ? "working" : "warning";
-  const summary = compact([
-    `${liveRuns.length} live run${liveRuns.length === 1 ? "" : "s"} attached.`,
-    commandCount > 0 ? `${commandCount} commands collapsed.` : null,
-    toolCount > 0 ? `${toolCount} tools collapsed.` : null,
-    thinkingCount > 0 ? `${thinkingCount} reasoning updates hidden from the main flow.` : null,
-    errorCount > 0 ? `${errorCount} execution error${errorCount === 1 ? "" : "s"} detected.` : null,
-  ]);
+  const summary = [
+    `${liveRuns.length} run${liveRuns.length === 1 ? "" : "s"}`,
+    commandCount > 0 ? `${commandCount} commands` : null,
+    toolCount > 0 ? `${toolCount} tools` : null,
+    thinkingCount > 0 ? `${thinkingCount} thinking` : null,
+    errorCount > 0 ? `${errorCount} errors` : null,
+  ].filter(Boolean).join(" · ");
 
   return {
-    title: errorCount > 0 ? "Execution needs attention" : "Execution in progress",
-    summary: summary || "A live run is attached to this issue.",
+    title: errorCount > 0 ? "Needs attention" : thinkingCount > 0 ? "Thinking" : commandCount + toolCount > 0 ? "Running" : "Starting",
+    summary: summary || "Live execution",
     tone,
     bundles,
   };

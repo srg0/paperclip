@@ -187,7 +187,8 @@ describe("buildPendingAtlasFollowupStatus", () => {
     });
 
     expect(status.state).toBe("pending");
-    expect(status.title).toContain("запускаю следующий turn");
+    expect(status.title).toBe("Starting");
+    expect(status.detail).toBeNull();
   });
 
   it("surfaces a running follow-up turn once the projection advances", () => {
@@ -213,8 +214,9 @@ describe("buildPendingAtlasFollowupStatus", () => {
     });
 
     expect(status.state).toBe("running");
-    expect(status.title).toContain("TURN 3");
-    expect(status.detail).toContain("Attachment state: unattached");
+    expect(status.title).toBe("Running");
+    expect(status.summary).toBe("TURN 3");
+    expect(status.detail).toBeNull();
   });
 
   it("surfaces a blocked dispatch immediately even before projection catches up", () => {
@@ -246,7 +248,7 @@ describe("buildPendingAtlasFollowupStatus", () => {
     });
 
     expect(status.state).toBe("blocked");
-    expect(status.title).toContain("Follow-up не отправлен");
+    expect(status.title).toBe("Blocked");
     expect(status.summary).toContain("Atlas bridge worker is not running");
   });
 
@@ -278,15 +280,15 @@ describe("buildPendingAtlasFollowupStatus", () => {
       },
       live: {
         state: "queued",
-        title: "TURN 3 в очереди",
-        summary: "Atlas Executor поставлен в очередь и ждёт старта run.",
+        title: "Starting",
+        summary: "Atlas Executor",
         detail: null,
         turnLabel: "TURN 3",
       },
     });
 
     expect(status.state).toBe("queued");
-    expect(status.title).toBe("TURN 3 в очереди");
+    expect(status.title).toBe("Starting");
     expect(status.turnLabel).toBe("TURN 3");
   });
 });

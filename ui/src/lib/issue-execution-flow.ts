@@ -345,18 +345,16 @@ export function buildPendingAtlasFollowupStatus(input: {
     return {
       state: "blocked",
       title: dispatch.requestType === "directed_agent"
-        ? "Сообщение не отправлено выбранному агенту"
+        ? "Blocked"
         : dispatch.requestType === "merge_request"
-          ? "Запрос на MR не был отправлен"
-          : "Follow-up не отправлен в Atlas",
+          ? "MR blocked"
+          : "Blocked",
       summary: dispatch.detail ?? (
         dispatch.requestType === "directed_agent"
-          ? "Комментарий сохранён, но выбранный агент не принял новый запрос."
-          : "Комментарий сохранён, но Atlas не принял новый turn."
+          ? "Agent did not accept the message."
+          : "Atlas did not accept the follow-up."
       ),
-      detail: dispatch.requestType === "directed_agent"
-        ? "Живой ответ от выбранного агента не стартовал, потому что direct dispatch не дошёл до него."
-        : "Повторный generic wake suppressed, чтобы не проигрывать старый execution вместо нового turn.",
+      detail: null,
       turnLabel: dispatch.turnLabel ?? null,
     };
   }
@@ -374,23 +372,11 @@ export function buildPendingAtlasFollowupStatus(input: {
   if (!hasFreshProjection && !hasNewerTurn) {
     return {
       state: dispatch?.status === "accepted" ? "accepted" : "pending",
-      title: dispatch?.requestType === "directed_agent"
-        ? "Сообщение принято, запускаю прямой ответ агента"
-        : dispatch?.requestType === "merge_request"
-          ? "Запрос на MR принят и ставится в очередь"
-          : turnLabel ? `${turnLabel} ставлю в очередь` : "Комментарий принят, запускаю следующий turn",
-      summary: dispatch?.status === "accepted"
-        ? (
-          dispatch.requestType === "directed_agent"
-            ? "Выбранный агент уже принял directed follow-up и должен начать отвечать в этом чате."
-            : dispatch.requestType === "merge_request"
-              ? "Release-path уже принял запрос и должен вернуть первый live status в этот issue chat."
-              : "Atlas уже принял follow-up и должен прислать первый live status в этот issue chat."
-        )
-        : "Atlas ещё не подтвердил новый execution в проекции issue.",
-      detail: dispatch?.status === "accepted"
-        ? dispatch.detail ?? "Ждём прямой queued/running сигнал по live transport."
-        : "Ждём Atlas Executor и первый sync статуса.",
+      title: dispatch?.status === "accepted" ? "Thinking" : "Starting",
+      summary: dispatch?.requestType === "directed_agent"
+        ? "Atlas Executor"
+        : turnLabel ?? "Atlas",
+      detail: null,
       turnLabel,
     };
   }
@@ -398,9 +384,9 @@ export function buildPendingAtlasFollowupStatus(input: {
   if (state === "queued" || state === "running") {
     return {
       state: "running",
-      title: turnLabel ? `${turnLabel} уже запускается` : "Новый turn уже запускается",
-      summary: parsed.summary ?? "Atlas уже принял follow-up и ведёт execution.",
-      detail: parsed.attachmentState ? `Attachment state: ${parsed.attachmentState}` : parsed.nextStep,
+      title: "Running",
+      summary: turnLabel ?? "Atlas",
+      detail: null,
       turnLabel,
     };
   }
@@ -408,8 +394,8 @@ export function buildPendingAtlasFollowupStatus(input: {
   if (state === "failed" || state === "error") {
     return {
       state: "failed",
-      title: turnLabel ? `${turnLabel} завершился с ошибкой` : "Последний turn завершился с ошибкой",
-      summary: parsed.summary ?? "Execution не дошёл до успешного terminal state.",
+      title: "Failed",
+      summary: turnLabel ?? parsed.summary ?? "Execution failed",
       detail: parsed.nextStep ?? parsed.failureClass ?? null,
       turnLabel,
     };
@@ -418,18 +404,18 @@ export function buildPendingAtlasFollowupStatus(input: {
   if (state === "completed" || state === "succeeded" || state === "success" || state === "ready") {
     return {
       state: "completed",
-      title: turnLabel ? `${turnLabel} дошёл до terminal state` : "Последний turn дошёл до terminal state",
-      summary: parsed.summary ?? "Execution завершён и ждёт следующего шага по verify/review.",
-      detail: parsed.nextStep,
+      title: "Done",
+      summary: turnLabel ?? parsed.summary ?? "Execution finished",
+      detail: null,
       turnLabel,
     };
   }
 
   return {
     state: "pending",
-    title: "Комментарий принят, уточняю текущее состояние turn",
-    summary: parsed.summary ?? "Execution уже обновился, но финальное состояние ещё неясно.",
-    detail: parsed.nextStep,
+    title: "Thinking",
+    summary: turnLabel ?? "Atlas",
+    detail: null,
     turnLabel,
   };
 }

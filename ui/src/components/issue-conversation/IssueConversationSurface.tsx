@@ -16,6 +16,24 @@ import {
   type IssueConversationVerbosity,
 } from "../../lib/issue-conversation-model";
 
+function isAnimatedLiveState(state: PendingAtlasFollowupStatus["state"] | null | undefined) {
+  return state === "pending" || state === "accepted" || state === "queued" || state === "running";
+}
+
+function LiveThinkingDots({ className }: { className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1", className)} aria-hidden="true">
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className="size-1.5 rounded-full bg-current animate-pulse"
+          style={{ animationDelay: `${index * 180}ms`, animationDuration: "1s" }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function toneClasses(tone: IssueConversationTurnCard["tone"]) {
   switch (tone) {
     case "working":
@@ -275,17 +293,21 @@ export function IssueConversationSurface({
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-300" />
               ) : pendingFollowupStatus.state === "blocked" || pendingFollowupStatus.state === "failed" ? (
                 <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-300" />
-              ) : pendingFollowupStatus.state === "accepted" || pendingFollowupStatus.state === "queued" ? (
-                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />
-              ) : pendingFollowupStatus.state === "running" ? (
-                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />
+              ) : pendingFollowupStatus.state === "accepted" || pendingFollowupStatus.state === "queued" || pendingFollowupStatus.state === "running" || pendingFollowupStatus.state === "pending" ? (
+                <span className="mt-0.5 inline-flex h-4 shrink-0 items-center text-cyan-600 dark:text-cyan-300">
+                  <LiveThinkingDots />
+                </span>
               ) : (
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" />
               )}
               <div className="min-w-0">
-                <div className="text-[13px] font-semibold">{pendingFollowupStatus.title}</div>
-                <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{pendingFollowupStatus.summary}</div>
-                {pendingFollowupStatus.detail ? (
+                <div className="text-[13px] font-semibold">
+                  {pendingFollowupStatus.title}
+                </div>
+                {pendingFollowupStatus.summary && pendingFollowupStatus.summary !== pendingFollowupStatus.title ? (
+                  <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{pendingFollowupStatus.summary}</div>
+                ) : null}
+                {pendingFollowupStatus.detail && !isAnimatedLiveState(pendingFollowupStatus.state) ? (
                   <div className="mt-1 text-[12px] leading-5 text-muted-foreground/80">{pendingFollowupStatus.detail}</div>
                 ) : null}
               </div>
@@ -339,10 +361,20 @@ export function IssueConversationSurface({
             )}
           >
             <div className="flex items-start gap-3">
-              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />
+              {model.liveStrip.tone === "danger" ? (
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-300" />
+              ) : model.liveStrip.tone === "warning" ? (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" />
+              ) : (
+                <span className="mt-0.5 inline-flex h-4 shrink-0 items-center text-cyan-600 dark:text-cyan-300">
+                  <LiveThinkingDots />
+                </span>
+              )}
               <div className="min-w-0">
                 <div className="text-[13px] font-semibold">{model.liveStrip.title}</div>
-                <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{model.liveStrip.summary}</div>
+                {model.liveStrip.summary ? (
+                  <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{model.liveStrip.summary}</div>
+                ) : null}
                 {model.liveStrip.bundles.length > 0 ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {model.liveStrip.bundles.slice(0, model.effectiveVerbosity === "debug" ? undefined : 3).map((bundle) => (

@@ -867,17 +867,17 @@ export function IssueDetail() {
         });
         const blockedTitle =
           atlasFollowup.requestType === "directed_agent"
-            ? "Агент не принял сообщение"
+            ? "Blocked"
             : atlasFollowup.requestType === "merge_request"
-              ? "MR запрос не принят"
-              : "Atlas не принял follow-up";
+              ? "MR blocked"
+              : "Blocked";
         const blockedBody =
           atlasFollowup.detail
           ?? (atlasFollowup.requestType === "directed_agent"
-            ? "Комментарий сохранён, но выбранный агент не принял прямой dispatch."
+            ? "Agent did not accept the message."
             : atlasFollowup.requestType === "merge_request"
-              ? "Комментарий сохранён, но запрос на MR не был принят."
-              : "Комментарий сохранён, но новый turn не был создан.");
+              ? "MR request was not accepted."
+              : "Atlas did not accept the follow-up.");
         pushToast({
           title: blockedTitle,
           body: blockedBody,
