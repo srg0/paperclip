@@ -622,7 +622,7 @@ describe("issue comment reopen routes", () => {
     );
   });
 
-  it("routes comments to the currently selected agent without starting a generic Atlas follow-up", async () => {
+  it("routes directed Atlas comments through the bridge follow-up path instead of local wakeup", async () => {
     const issue = {
       ...makeIssue("todo"),
       executionRunId: "run-1",
@@ -663,29 +663,27 @@ describe("issue comment reopen routes", () => {
     expect(res.body.atlasFollowupTriggered).toBe(false);
     expect(res.body.interruptedRunId).toBe("run-1");
     expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1");
-    expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
       "plugin-1",
       "performAction",
-      expect.objectContaining({
+      {
         key: "atlas-bridge-followup-issue-execution",
-      }),
+        params: expect.objectContaining({
+          issueId: issue.id,
+          companyId: "company-1",
+          commentId: "comment-1",
+          deferInitialSync: true,
+          turnNumber: 3,
+          turnLabel: "TURN 3",
+        }),
+        renderEnvironment: null,
+      },
       15_000,
     );
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
       "22222222-2222-4222-8222-222222222222",
       expect.objectContaining({
         reason: "issue_commented",
-        payload: expect.objectContaining({
-          issueId: issue.id,
-          commentId: "comment-1",
-        }),
-        contextSnapshot: expect.objectContaining({
-          issueId: issue.id,
-          commentId: "comment-1",
-          wakeCommentId: "comment-1",
-          source: "issue.comment.directed",
-          directedCommentTargetId: "22222222-2222-4222-8222-222222222222",
-        }),
       }),
     );
     expect(mockIssueService.addComment).toHaveBeenCalledTimes(2);
@@ -750,7 +748,7 @@ describe("issue comment reopen routes", () => {
     );
   });
 
-  it("routes direct comment posts to the selected agent without using Atlas follow-up", async () => {
+  it("routes direct Atlas comment posts through the bridge follow-up path", async () => {
     const issue = {
       ...makeIssue("todo"),
       executionRunId: "run-2",
@@ -794,29 +792,32 @@ describe("issue comment reopen routes", () => {
     });
     expect(res.body.interruptedRunId).toBe("run-2");
     expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-2");
-    expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
+    expect(mockWorkerManager.call).toHaveBeenCalledWith(
       "plugin-1",
       "performAction",
-      expect.objectContaining({
+      {
         key: "atlas-bridge-followup-issue-execution",
-      }),
+        params: expect.objectContaining({
+          issueId: issue.id,
+          companyId: "company-1",
+          commentId: "comment-1",
+          deferInitialSync: true,
+          turnNumber: 5,
+          turnLabel: "TURN 5",
+        }),
+        renderEnvironment: null,
+      },
       15_000,
     );
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
       "22222222-2222-4222-8222-222222222222",
       expect.objectContaining({
         reason: "issue_commented",
-        contextSnapshot: expect.objectContaining({
-          issueId: issue.id,
-          wakeCommentId: "comment-1",
-          source: "issue.comment.directed",
-          directedCommentTargetId: "22222222-2222-4222-8222-222222222222",
-        }),
       }),
     );
   });
 
-  it("returns a blocked directed-agent follow-up when the direct wakeup is rejected", async () => {
+  it("returns a blocked directed-agent follow-up when the bridge dispatch is rejected", async () => {
     const issue = {
       ...makeIssue("todo"),
       executionRunId: "run-2",
@@ -835,7 +836,12 @@ describe("issue comment reopen routes", () => {
       agentId: "22222222-2222-4222-8222-222222222222",
       status: "cancelled",
     });
-    mockHeartbeatService.wakeup.mockRejectedValueOnce(new Error("Directed wakeup rejected"));
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+    mockWorkerManager.call.mockRejectedValueOnce(new Error("Directed bridge dispatch rejected"));
     mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
       key: "atlas-execution",
       body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
@@ -852,7 +858,7 @@ describe("issue comment reopen routes", () => {
     expect(res.body.atlasFollowup).toMatchObject({
       status: "blocked",
       requestType: "directed_agent",
-      detail: "Directed wakeup rejected",
+      detail: "Directed bridge dispatch rejected",
     });
   });
 
