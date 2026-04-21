@@ -470,6 +470,13 @@ export function issueRoutes(
     return { project, goal: null };
   }
 
+  function buildDirectedIssueAckComment(targetAgentName: string) {
+    return [
+      `Принял follow-up. Это ${targetAgentName}.`,
+      "Сейчас запускаю новый turn и вернусь сюда с живым статусом queued/running либо с явным blocker.",
+    ].join("\n\n");
+  }
+
   async function dispatchDirectedIssueComment(input: {
     issue: {
       id: string;
@@ -539,6 +546,30 @@ export function issueRoutes(
           source: input.source === "issue_comment_reassign" ? "issue.comment.reassign" : "issue.comment.directed",
           directedCommentTargetId: input.targetAgentId,
           ...(input.interruptedRunId ? { interruptedRunId: input.interruptedRunId } : {}),
+        },
+      });
+
+      const ackComment = await svc.addComment(
+        input.issue.id,
+        buildDirectedIssueAckComment(targetAgentName),
+        { agentId: input.targetAgentId },
+      );
+
+      await logActivity(db, {
+        companyId: input.issue.companyId,
+        actorType: "agent",
+        actorId: input.targetAgentId,
+        agentId: input.targetAgentId,
+        runId: null,
+        action: "issue.comment_added",
+        entityType: "issue",
+        entityId: input.issue.id,
+        details: {
+          commentId: ackComment.id,
+          bodySnippet: ackComment.body.slice(0, 120),
+          identifier: input.issue.identifier,
+          issueTitle: input.issue.title,
+          source: "directed_followup_ack",
         },
       });
 
