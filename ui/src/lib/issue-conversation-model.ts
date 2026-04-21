@@ -146,7 +146,7 @@ function statusLabel(status: IssueConversationTurnCard["status"]): string {
 function nextActionForTurn(turn: IssueExecutionTurn, isLatest: boolean, hasActiveLiveRun: boolean): string | null {
   const outcome = cleanMarkdownText(turn.outcome ?? "").toLowerCase();
   const proofState = proofStateForTurn(turn);
-  if (hasActiveLiveRun && isLatest) return "Execution is still running. Keep the main flow compact until the next proof-bearing update lands.";
+  if (hasActiveLiveRun && isLatest) return null;
   if (outcome.includes("не прошла") || outcome.includes("с замечаниями")) {
     return "A follow-up turn is needed before this can be treated as ready for review.";
   }

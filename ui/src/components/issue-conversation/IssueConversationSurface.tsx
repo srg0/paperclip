@@ -183,7 +183,7 @@ function TurnCard({
       {visibleBundles.length > 0 ? (
         <div className="mt-4 space-y-2">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Collapsed work
+            Work
           </div>
           {visibleBundles.map((bundle, index) => (
             <PhaseBundleRow
@@ -194,7 +194,7 @@ function TurnCard({
           ))}
           {!showAllBundles && turn.phaseBundles.length > visibleBundles.length ? (
             <div className="pl-1 text-xs text-muted-foreground">
-              +{turn.phaseBundles.length - visibleBundles.length} more internal bundles in debug mode
+              +{turn.phaseBundles.length - visibleBundles.length} more
             </div>
           ) : null}
         </div>
