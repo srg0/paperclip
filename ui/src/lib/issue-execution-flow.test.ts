@@ -216,6 +216,79 @@ describe("buildPendingAtlasFollowupStatus", () => {
     expect(status.title).toContain("TURN 3");
     expect(status.detail).toContain("Attachment state: unattached");
   });
+
+  it("surfaces a blocked dispatch immediately even before projection catches up", () => {
+    const parsed = parseExecutionDocument(makeExecutionDocument(`# Сводка выполнения Atlas
+
+Проекция ещё не обновилась
+
+## Что произошло
+
+- Turn: \`TURN 2\`
+- Статус: \`in_review\`
+
+## Техническая привязка
+
+- Execution state: \`completed\`
+- Projection updated: \`2026-04-15T11:15:55.834Z\``));
+
+    const status = buildPendingAtlasFollowupStatus({
+      pendingSince: "2026-04-15T11:16:10.000Z",
+      baseTurnNumber: 2,
+      parsed,
+      dispatch: {
+        status: "blocked",
+        requestType: "followup",
+        detail: "Atlas bridge worker is not running.",
+        turnNumber: 3,
+        turnLabel: "TURN 3",
+      },
+    });
+
+    expect(status.state).toBe("blocked");
+    expect(status.title).toContain("Follow-up не отправлен");
+    expect(status.summary).toContain("Atlas bridge worker is not running");
+  });
+
+  it("prefers the live transport state over a stale projection snapshot", () => {
+    const parsed = parseExecutionDocument(makeExecutionDocument(`# Сводка выполнения Atlas
+
+Проекция ещё не догнала follow-up
+
+## Что произошло
+
+- Turn: \`TURN 2\`
+- Статус: \`in_review\`
+
+## Техническая привязка
+
+- Execution state: \`completed\`
+- Projection updated: \`2026-04-15T11:15:55.834Z\``));
+
+    const status = buildPendingAtlasFollowupStatus({
+      pendingSince: "2026-04-15T11:16:10.000Z",
+      baseTurnNumber: 2,
+      parsed,
+      dispatch: {
+        status: "accepted",
+        requestType: "followup",
+        detail: "Atlas accepted the follow-up.",
+        turnNumber: 3,
+        turnLabel: "TURN 3",
+      },
+      live: {
+        state: "queued",
+        title: "TURN 3 в очереди",
+        summary: "Atlas Executor поставлен в очередь и ждёт старта run.",
+        detail: null,
+        turnLabel: "TURN 3",
+      },
+    });
+
+    expect(status.state).toBe("queued");
+    expect(status.title).toBe("TURN 3 в очереди");
+    expect(status.turnLabel).toBe("TURN 3");
+  });
 });
 
 describe("parseExecutionDocument", () => {

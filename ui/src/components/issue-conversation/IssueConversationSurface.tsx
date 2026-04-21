@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { cn, relativeTime } from "@/lib/utils";
 import type { LiveRunForIssue } from "../../api/heartbeats";
 import type { IssueExecutionCommentContext } from "../../lib/issue-execution-turns";
+import type { PendingAtlasFollowupStatus } from "../../lib/issue-execution-flow";
+import type { IssueChatLiveFeedItem } from "../../lib/issue-chat-live-transport";
 import { useLiveRunTranscripts } from "../transcript/useLiveRunTranscripts";
 import {
   buildIssueConversationModel,
@@ -197,12 +199,16 @@ export function IssueConversationSurface({
   context,
   verbosity,
   onVerbosityChange,
+  pendingFollowupStatus,
+  liveFeed,
 }: {
   companyId?: string | null;
   liveRuns: LiveRunForIssue[];
   context: IssueExecutionCommentContext | null;
   verbosity: IssueConversationVerbosity;
   onVerbosityChange: (value: IssueConversationVerbosity) => void;
+  pendingFollowupStatus?: PendingAtlasFollowupStatus | null;
+  liveFeed?: IssueChatLiveFeedItem[] | null;
 }) {
   const { transcriptByRun } = useLiveRunTranscripts({
     runs: liveRuns,
@@ -247,6 +253,80 @@ export function IssueConversationSurface({
       </div>
 
       <div className="space-y-4">
+        {pendingFollowupStatus ? (
+          <div
+            className={cn(
+              "rounded-2xl border px-3.5 py-3 animate-in fade-in slide-in-from-bottom-2 duration-500",
+              pendingFollowupStatus.state === "blocked"
+                ? "border-red-500/25 bg-red-500/[0.05]"
+                : pendingFollowupStatus.state === "failed"
+                  ? "border-red-500/25 bg-red-500/[0.05]"
+                  : pendingFollowupStatus.state === "accepted" || pendingFollowupStatus.state === "queued"
+                    ? "border-cyan-500/25 bg-cyan-500/[0.05]"
+                    : pendingFollowupStatus.state === "completed"
+                      ? "border-emerald-500/25 bg-emerald-500/[0.05]"
+                      : pendingFollowupStatus.state === "running"
+                      ? "border-cyan-500/25 bg-cyan-500/[0.05]"
+                      : "border-amber-500/25 bg-amber-500/[0.05]",
+            )}
+          >
+            <div className="flex items-start gap-3">
+              {pendingFollowupStatus.state === "completed" ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-300" />
+              ) : pendingFollowupStatus.state === "blocked" || pendingFollowupStatus.state === "failed" ? (
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-300" />
+              ) : pendingFollowupStatus.state === "accepted" || pendingFollowupStatus.state === "queued" ? (
+                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />
+              ) : pendingFollowupStatus.state === "running" ? (
+                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />
+              ) : (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" />
+              )}
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold">{pendingFollowupStatus.title}</div>
+                <div className="mt-1 text-[13px] leading-6 text-muted-foreground">{pendingFollowupStatus.summary}</div>
+                {pendingFollowupStatus.detail ? (
+                  <div className="mt-1 text-[12px] leading-5 text-muted-foreground/80">{pendingFollowupStatus.detail}</div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {liveFeed && liveFeed.length > 0 ? (
+          <div className="rounded-2xl border border-border/70 bg-background/92 px-3.5 py-3 shadow-[var(--codex-surface-shadow)] animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Live relay
+              </div>
+            </div>
+            <div className="mt-3 space-y-2">
+              {liveFeed.slice(0, verbosity === "debug" ? undefined : 4).map((item) => (
+                <div
+                  key={item.key}
+                  className={cn(
+                    "rounded-xl border px-3 py-2",
+                    item.tone === "danger" && "border-red-500/20 bg-red-500/[0.04]",
+                    item.tone === "warning" && "border-amber-500/20 bg-amber-500/[0.04]",
+                    item.tone === "success" && "border-emerald-500/20 bg-emerald-500/[0.04]",
+                    item.tone === "working" && "border-cyan-500/20 bg-cyan-500/[0.04]",
+                    item.tone === "neutral" && "border-border/60 bg-background/70",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[12px] font-medium">{item.title}</div>
+                      <div className="mt-1 text-[12px] leading-5 text-muted-foreground">{item.summary}</div>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">{relativeTime(item.createdAt)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {model.liveStrip ? (
           <div
             className={cn(

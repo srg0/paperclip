@@ -17,6 +17,13 @@ export type IssueUpdateResponse = Issue & {
 
 export type IssueCommentResponse = IssueUpdateResponse & {
   atlasFollowupTriggered?: boolean;
+  atlasFollowup?: {
+    status: "accepted" | "blocked" | "not_applicable";
+    requestType: "followup" | "merge_request" | "directed_agent" | null;
+    detail: string | null;
+    turnNumber: number | null;
+    turnLabel: string | null;
+  };
   interruptedRunId?: string | null;
 };
 

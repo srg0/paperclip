@@ -91,7 +91,7 @@ function createApp() {
   return app;
 }
 
-function makeIssue(status: "todo" | "done") {
+function makeIssue(status: "todo" | "done" | "in_review") {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     companyId: "company-1",
@@ -109,6 +109,7 @@ describe("issue comment reopen routes", () => {
     vi.clearAllMocks();
     mockDocumentService.getIssueDocumentByKey.mockResolvedValue(null);
     mockPluginRegistry.getByKey.mockResolvedValue(null);
+    mockWorkerManager.isRunning.mockReturnValue(true);
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
@@ -131,6 +132,19 @@ describe("issue comment reopen routes", () => {
       identifier: "PAP-581",
       title: "Created",
     });
+    mockAgentService.getById.mockImplementation(async (id: string) => ({
+      id,
+      companyId: "company-1",
+      name:
+        id === "22222222-2222-4222-8222-222222222222"
+          ? "Atlas Executor"
+          : id === "33333333-3333-4333-8333-333333333333"
+            ? "Business Analyst"
+            : "Agent",
+      urlKey: "agent",
+      role: "general",
+      status: "active",
+    }));
     mockAgentService.list.mockResolvedValue([]);
     mockStorage.getObject.mockResolvedValue({
       contentType: "image/png",
@@ -277,6 +291,12 @@ describe("issue comment reopen routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.atlasFollowupTriggered).toBe(true);
+    expect(res.body.atlasFollowup).toMatchObject({
+      status: "accepted",
+      requestType: "followup",
+      turnNumber: 5,
+      turnLabel: "TURN 5",
+    });
     expect(res.body.comment?.id).toBe("comment-1");
     expect(mockWorkerManager.call).toHaveBeenCalledWith(
       "plugin-1",
@@ -376,7 +396,6 @@ describe("issue comment reopen routes", () => {
   });
 
   it("routes colloquial MR comments to MR creation even when the issue is already in review", async () => {
-    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
     mockIssueService.getById.mockResolvedValue({
       ...makeIssue("todo"),
       status: "in_review",
@@ -427,6 +446,58 @@ describe("issue comment reopen routes", () => {
     expect(res.body.atlasFollowupTriggered).toBe(false);
     expect(res.body.atlasMergeRequestHandled).toBe(true);
     expect(res.body.atlasMergeRequestError).toContain("Issue is not review-ready for merge request creation");
+    expect(res.body.atlasFollowup).toMatchObject({
+      status: "blocked",
+      requestType: "merge_request",
+    });
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({ reason: "issue_commented" }),
+    );
+  });
+
+  it("reopens in_review issues via the direct comment route before saving the comment", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("in_review"));
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...makeIssue("in_review"),
+      ...patch,
+    }));
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Новый follow-up после review.", reopen: true });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "todo",
+    });
+  });
+
+  it("returns a blocked follow-up ack and suppresses generic wakeups when Atlas bridge is unavailable", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+    mockPluginRegistry.getByKey.mockResolvedValue({
+      id: "plugin-1",
+      pluginKey: "homio.atlas-bridge",
+      status: "ready",
+    });
+    mockWorkerManager.isRunning.mockReturnValue(false);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Сразу ответь в этот же тред." });
+
+    expect(res.status).toBe(201);
+    expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(res.body.atlasFollowup).toMatchObject({
+      status: "blocked",
+      requestType: "followup",
+      turnNumber: 5,
+      turnLabel: "TURN 5",
+    });
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
       "22222222-2222-4222-8222-222222222222",
       expect.objectContaining({ reason: "issue_commented" }),
@@ -453,6 +524,12 @@ describe("issue comment reopen routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.atlasFollowupTriggered).toBe(true);
+    expect(res.body.atlasFollowup).toMatchObject({
+      status: "accepted",
+      requestType: "followup",
+      turnNumber: 3,
+      turnLabel: "TURN 3",
+    });
     expect(res.body.comment?.id).toBe("comment-1");
     expect(mockWorkerManager.call).toHaveBeenCalledWith(
       "plugin-1",
@@ -702,6 +779,10 @@ describe("issue comment reopen routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.atlasFollowupTriggered).toBe(false);
+    expect(res.body.atlasFollowup).toMatchObject({
+      status: "accepted",
+      requestType: "directed_agent",
+    });
     expect(res.body.interruptedRunId).toBe("run-2");
     expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-2");
     expect(mockWorkerManager.call).not.toHaveBeenCalledWith(
@@ -724,6 +805,46 @@ describe("issue comment reopen routes", () => {
         }),
       }),
     );
+  });
+
+  it("returns a blocked directed-agent follow-up when the direct wakeup is rejected", async () => {
+    const issue = {
+      ...makeIssue("todo"),
+      executionRunId: "run-2",
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-2",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "running",
+      contextSnapshot: { issueId: issue.id },
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-2",
+      companyId: "company-1",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      status: "cancelled",
+    });
+    mockHeartbeatService.wakeup.mockRejectedValueOnce(new Error("Directed wakeup rejected"));
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      body: ["# Atlas Execution", "", "- Turn: `TURN 4`"].join("\n"),
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({
+        body: "Ответь прямо в чат без повторного review-сводного комментария.",
+        commentTargetAgentId: "22222222-2222-4222-8222-222222222222",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.atlasFollowup).toMatchObject({
+      status: "blocked",
+      requestType: "directed_agent",
+      detail: "Directed wakeup rejected",
+    });
   });
 
   it("propagates comment images into Atlas follow-up context", async () => {

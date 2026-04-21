@@ -96,7 +96,7 @@ export interface IssueExecutionHeaderModel {
 }
 
 export interface PendingAtlasFollowupStatus {
-  state: "pending" | "running" | "failed" | "completed";
+  state: "pending" | "accepted" | "queued" | "running" | "failed" | "completed" | "blocked";
   title: string;
   summary: string;
   detail: string | null;
@@ -316,22 +316,82 @@ export function buildPendingAtlasFollowupStatus(input: {
   pendingSince: string | Date;
   baseTurnNumber: number | null;
   parsed: ParsedExecutionDocument;
+  dispatch?: {
+    status: "accepted" | "blocked";
+    requestType: "followup" | "merge_request" | "directed_agent" | null;
+    detail: string | null;
+    turnNumber: number | null;
+    turnLabel: string | null;
+  } | null;
+  live?: {
+    state: "accepted" | "queued" | "running" | "completed" | "failed" | "blocked";
+    title: string;
+    summary: string;
+    detail: string | null;
+    turnLabel: string | null;
+  } | null;
 }): PendingAtlasFollowupStatus {
-  const { parsed, baseTurnNumber } = input;
+  const { parsed, baseTurnNumber, dispatch, live } = input;
   const pendingSinceMs = new Date(input.pendingSince).getTime();
   const projectionUpdatedMs = parsed.updatedAt ? new Date(parsed.updatedAt).getTime() : Number.NaN;
   const hasFreshProjection = Number.isFinite(projectionUpdatedMs) && projectionUpdatedMs >= pendingSinceMs;
   const hasNewerTurn = parsed.turnNumber !== null && (baseTurnNumber === null || parsed.turnNumber > baseTurnNumber);
   const state = parsed.executionState?.toLowerCase() ?? null;
-  const turnLabel = hasNewerTurn ? parsed.turnLabel : parsed.turnLabel ?? null;
+  const turnLabel = hasNewerTurn
+    ? parsed.turnLabel
+    : dispatch?.turnLabel ?? parsed.turnLabel ?? null;
+
+  if (dispatch?.status === "blocked") {
+    return {
+      state: "blocked",
+      title: dispatch.requestType === "directed_agent"
+        ? "Сообщение не отправлено выбранному агенту"
+        : dispatch.requestType === "merge_request"
+          ? "Запрос на MR не был отправлен"
+          : "Follow-up не отправлен в Atlas",
+      summary: dispatch.detail ?? (
+        dispatch.requestType === "directed_agent"
+          ? "Комментарий сохранён, но выбранный агент не принял новый запрос."
+          : "Комментарий сохранён, но Atlas не принял новый turn."
+      ),
+      detail: dispatch.requestType === "directed_agent"
+        ? "Живой ответ от выбранного агента не стартовал, потому что direct dispatch не дошёл до него."
+        : "Повторный generic wake suppressed, чтобы не проигрывать старый execution вместо нового turn.",
+      turnLabel: dispatch.turnLabel ?? null,
+    };
+  }
+
+  if (live?.state) {
+    return {
+      state: live.state,
+      title: live.title,
+      summary: live.summary,
+      detail: live.detail,
+      turnLabel: live.turnLabel,
+    };
+  }
 
   if (!hasFreshProjection && !hasNewerTurn) {
     return {
-      state: "pending",
-      title: "Комментарий принят, запускаю следующий turn",
-      summary: "Atlas ещё не подтвердил новый execution в проекции issue.",
-      detail: "Ждём Atlas Executor и первый sync статуса.",
-      turnLabel: null,
+      state: dispatch?.status === "accepted" ? "accepted" : "pending",
+      title: dispatch?.requestType === "directed_agent"
+        ? "Сообщение принято, запускаю прямой ответ агента"
+        : dispatch?.requestType === "merge_request"
+          ? "Запрос на MR принят и ставится в очередь"
+          : turnLabel ? `${turnLabel} ставлю в очередь` : "Комментарий принят, запускаю следующий turn",
+      summary: dispatch?.status === "accepted"
+        ? (
+          dispatch.requestType === "directed_agent"
+            ? "Выбранный агент уже принял directed follow-up и должен начать отвечать в этом чате."
+            : dispatch.requestType === "merge_request"
+              ? "Release-path уже принял запрос и должен вернуть первый live status в этот issue chat."
+              : "Atlas уже принял follow-up и должен прислать первый live status в этот issue chat."
+        )
+        : "Atlas ещё не подтвердил новый execution в проекции issue.",
+      detail: dispatch?.status === "accepted"
+        ? dispatch.detail ?? "Ждём прямой queued/running сигнал по live transport."
+        : "Ждём Atlas Executor и первый sync статуса.",
+      turnLabel,
     };
   }
 

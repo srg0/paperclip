@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { Agent, Issue, LiveEvent } from "@paperclipai/shared";
 import type { RunForIssue } from "../api/activity";
@@ -25,6 +25,14 @@ type LiveUpdatesSocketLike = {
   onclose: ((this: WebSocket, ev: CloseEvent) => unknown) | null;
   close: (code?: number, reason?: string) => void;
 };
+
+type LiveUpdatesListener = (event: LiveEvent) => void;
+
+interface LiveUpdatesContextValue {
+  subscribe: (listener: LiveUpdatesListener) => () => void;
+}
+
+const LiveUpdatesContext = createContext<LiveUpdatesContextValue | undefined>(undefined);
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -720,6 +728,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const gateRef = useRef<ToastGate>({ cooldownHits: new Map(), suppressUntil: 0 });
   const pathnameRef = useRef(location.pathname);
+  const listenersRef = useRef(new Set<LiveUpdatesListener>());
   const { data: session, status: sessionStatus } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -744,6 +753,28 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       agentId: null,
     };
   }, [currentUserId]);
+
+  const subscribe = useCallback((listener: LiveUpdatesListener) => {
+    listenersRef.current.add(listener);
+    return () => {
+      listenersRef.current.delete(listener);
+    };
+  }, []);
+
+  const emitLiveEvent = useCallback((event: LiveEvent) => {
+    for (const listener of Array.from(listenersRef.current)) {
+      try {
+        listener(event);
+      } catch {
+        // Listener failures should not break the shared live event stream.
+      }
+    }
+  }, []);
+
+  const contextValue = useMemo<LiveUpdatesContextValue>(
+    () => ({ subscribe }),
+    [subscribe],
+  );
 
   useEffect(() => {
     if (!canConnectSocket || !liveCompanyId) return;
@@ -794,6 +825,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
 
         try {
           const parsed = JSON.parse(raw) as LiveEvent;
+          emitLiveEvent(parsed);
           handleLiveEvent(queryClient, liveCompanyId, pathnameRef.current, parsed, pushToast, gateRef.current, {
             userId: currentActorRef.current.userId,
             agentId: currentActorRef.current.agentId,
@@ -831,5 +863,17 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     };
   }, [queryClient, liveCompanyId, pushToast, canConnectSocket, socketAuthKey]);
 
-  return <>{children}</>;
+  return (
+    <LiveUpdatesContext.Provider value={contextValue}>
+      {children}
+    </LiveUpdatesContext.Provider>
+  );
+}
+
+export function useLiveUpdates() {
+  const context = useContext(LiveUpdatesContext);
+  if (!context) {
+    throw new Error("useLiveUpdates must be used within LiveUpdatesProvider");
+  }
+  return context;
 }

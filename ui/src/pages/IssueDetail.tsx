@@ -37,6 +37,7 @@ import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
 import { IssueConversationComposer } from "../components/issue-conversation/IssueConversationComposer";
 import { IssueConversationSurface } from "../components/issue-conversation/IssueConversationSurface";
 import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
+import { useIssueChatLiveTransport } from "../hooks/useIssueChatLiveTransport";
 import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "../lib/issue-execution-turns";
 import type { IssueConversationVerbosity } from "../lib/issue-conversation-model";
 import { filterIssueTimelineRuns } from "../lib/issue-run-history";
@@ -87,6 +88,11 @@ type PendingAtlasFollowup = {
   submittedAt: string;
   baseTurnNumber: number | null;
   commentId: string | null;
+  dispatchStatus: "accepted" | "blocked";
+  detail: string | null;
+  turnNumber: number | null;
+  turnLabel: string | null;
+  requestType: "followup" | "merge_request" | "directed_agent" | null;
 };
 
 function isSyntheticAtlasRun(run: { syntheticSource?: string | null } | null | undefined): boolean {
@@ -699,31 +705,54 @@ export function IssueDetail() {
       mismatchText: executionCommentContext?.projectionWarning ?? baseModel.mismatchText,
     };
   }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents, executionCommentContext]);
-  const pendingComposerStatus = useMemo(() => {
+  const issueChatLiveTransport = useIssueChatLiveTransport({
+    companyId: issue?.companyId ?? null,
+    issue: issue ? { id: issue.id, identifier: issue.identifier } : null,
+    agents: agents ?? null,
+  });
+  const effectivePendingComposerStatus = useMemo(() => {
     if (!pendingAtlasFollowup) return null;
     return buildPendingAtlasFollowupStatus({
       pendingSince: pendingAtlasFollowup.submittedAt,
       baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
       parsed: parsedExecutionDocument,
+      dispatch: {
+        status: pendingAtlasFollowup.dispatchStatus,
+        requestType: pendingAtlasFollowup.requestType,
+        detail: pendingAtlasFollowup.detail,
+        turnNumber: pendingAtlasFollowup.turnNumber,
+        turnLabel: pendingAtlasFollowup.turnLabel,
+      },
+      live: issueChatLiveTransport.signal
+        ? {
+          state: issueChatLiveTransport.signal.state,
+          title: issueChatLiveTransport.signal.title,
+          summary: issueChatLiveTransport.signal.summary,
+          detail: issueChatLiveTransport.signal.detail,
+          turnLabel: issueChatLiveTransport.signal.turnLabel,
+        }
+        : null,
     });
-  }, [pendingAtlasFollowup, parsedExecutionDocument]);
-  const pendingComposerStatusCard = pendingComposerStatus ? (
+  }, [issueChatLiveTransport.signal, parsedExecutionDocument, pendingAtlasFollowup]);
+  const pendingComposerStatusCard = effectivePendingComposerStatus ? (
     <div
       className={cn(
         "rounded-lg border px-3 py-2 text-xs",
-        pendingComposerStatus.state === "failed"
+        effectivePendingComposerStatus.state === "failed" || effectivePendingComposerStatus.state === "blocked"
           ? "border-red-500/30 bg-red-500/[0.06] text-red-900 dark:text-red-100"
-          : pendingComposerStatus.state === "completed"
+          : effectivePendingComposerStatus.state === "completed"
             ? "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-900 dark:text-emerald-100"
-            : pendingComposerStatus.state === "running"
+            : effectivePendingComposerStatus.state === "running"
+              || effectivePendingComposerStatus.state === "accepted"
+              || effectivePendingComposerStatus.state === "queued"
               ? "border-cyan-500/30 bg-cyan-500/[0.06] text-cyan-900 dark:text-cyan-100"
               : "border-amber-500/30 bg-amber-500/[0.06] text-amber-900 dark:text-amber-100"
       )}
     >
-      <div className="font-medium">{pendingComposerStatus.title}</div>
-      <div className="mt-1 opacity-90">{pendingComposerStatus.summary}</div>
-      {pendingComposerStatus.detail ? (
-        <div className="mt-1 opacity-75">{pendingComposerStatus.detail}</div>
+      <div className="font-medium">{effectivePendingComposerStatus.title}</div>
+      <div className="mt-1 opacity-90">{effectivePendingComposerStatus.summary}</div>
+      {effectivePendingComposerStatus.detail ? (
+        <div className="mt-1 opacity-75">{effectivePendingComposerStatus.detail}</div>
       ) : null}
     </div>
   ) : null;
@@ -824,42 +853,79 @@ export function IssueDetail() {
       if (response.id) {
         queryClient.setQueryData<Issue>(queryKeys.issues.detail(issueId!), response);
       }
-      if (response.atlasFollowupTriggered) {
-        const submittedAt = new Date().toISOString();
-        const atlasExecutorAgent = (agents ?? []).find((agent) => {
-          const candidate = `${agent.urlKey ?? ""} ${agent.name ?? ""} ${agent.role ?? ""}`.toLowerCase();
-          return candidate.includes("atlas-executor") || candidate.includes("atlas executor");
-        });
-        queryClient.setQueryData(
-          queryKeys.issues.liveRuns(issueId!),
-          (current: import("../api/heartbeats").LiveRunForIssue[] | undefined) => {
-            const next = (current ?? []).filter((run) => !isSyntheticAtlasRun(run));
-            next.unshift({
-              id: `atlas-followup:${response.comment?.id ?? submittedAt}`,
-              status: "queued",
-              invocationSource: "atlas_execution",
-              triggerDetail: parsedExecutionDocument.turnLabel
-                ? `Follow-up after ${parsedExecutionDocument.turnLabel}`
-                : "Atlas follow-up",
-              startedAt: submittedAt,
-              finishedAt: null,
-              createdAt: submittedAt,
-              agentId: atlasExecutorAgent?.id ?? issue?.assigneeAgentId ?? "atlas-executor",
-              agentName: atlasExecutorAgent?.name ?? "Atlas Executor",
-              adapterType: atlasExecutorAgent?.adapterType ?? "atlas_execution",
-              issueId: issueId!,
-              syntheticSource: "atlas_execution",
-              openable: false,
-            });
-            return next;
-          },
-        );
+      const atlasFollowup = response.atlasFollowup;
+      if (atlasFollowup?.status === "blocked") {
         setPendingAtlasFollowup({
-          submittedAt,
+          submittedAt: new Date().toISOString(),
           baseTurnNumber: parsedExecutionDocument.turnNumber,
           commentId: response.comment?.id ?? null,
+          dispatchStatus: "blocked",
+          detail: atlasFollowup.detail,
+          turnNumber: atlasFollowup.turnNumber,
+          turnLabel: atlasFollowup.turnLabel,
+          requestType: atlasFollowup.requestType,
         });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
+        const blockedTitle =
+          atlasFollowup.requestType === "directed_agent"
+            ? "Агент не принял сообщение"
+            : atlasFollowup.requestType === "merge_request"
+              ? "MR запрос не принят"
+              : "Atlas не принял follow-up";
+        const blockedBody =
+          atlasFollowup.detail
+          ?? (atlasFollowup.requestType === "directed_agent"
+            ? "Комментарий сохранён, но выбранный агент не принял прямой dispatch."
+            : atlasFollowup.requestType === "merge_request"
+              ? "Комментарий сохранён, но запрос на MR не был принят."
+              : "Комментарий сохранён, но новый turn не был создан.");
+        pushToast({
+          title: blockedTitle,
+          body: blockedBody,
+          tone: "warn",
+        });
+      } else if (atlasFollowup?.status === "accepted") {
+        const submittedAt = new Date().toISOString();
+        if (atlasFollowup.requestType === "followup") {
+          const atlasExecutorAgent = (agents ?? []).find((agent) => {
+            const candidate = `${agent.urlKey ?? ""} ${agent.name ?? ""} ${agent.role ?? ""}`.toLowerCase();
+            return candidate.includes("atlas-executor") || candidate.includes("atlas executor");
+          });
+          queryClient.setQueryData(
+            queryKeys.issues.liveRuns(issueId!),
+            (current: import("../api/heartbeats").LiveRunForIssue[] | undefined) => {
+              const next = (current ?? []).filter((run) => !isSyntheticAtlasRun(run));
+              next.unshift({
+                id: `atlas-followup:${response.comment?.id ?? submittedAt}`,
+                status: "queued",
+                invocationSource: "atlas_execution",
+                triggerDetail: parsedExecutionDocument.turnLabel
+                  ? `Follow-up after ${parsedExecutionDocument.turnLabel}`
+                  : "Atlas follow-up",
+                startedAt: submittedAt,
+                finishedAt: null,
+                createdAt: submittedAt,
+                agentId: atlasExecutorAgent?.id ?? issue?.assigneeAgentId ?? "atlas-executor",
+                agentName: atlasExecutorAgent?.name ?? "Atlas Executor",
+                adapterType: atlasExecutorAgent?.adapterType ?? "atlas_execution",
+                issueId: issueId!,
+                syntheticSource: "atlas_execution",
+                openable: false,
+              });
+              return next;
+            },
+          );
+          queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
+        }
+        setPendingAtlasFollowup({
+          submittedAt,
+          baseTurnNumber: atlasFollowup?.turnNumber ?? parsedExecutionDocument.turnNumber,
+          commentId: response.comment?.id ?? null,
+          dispatchStatus: "accepted",
+          detail: atlasFollowup?.detail ?? null,
+          turnNumber: atlasFollowup?.turnNumber ?? null,
+          turnLabel: atlasFollowup?.turnLabel ?? null,
+          requestType: atlasFollowup?.requestType ?? "followup",
+        });
       } else {
         setPendingAtlasFollowup(null);
       }
@@ -954,6 +1020,7 @@ export function IssueDetail() {
           (current) => upsertIssueComment(current, comment),
         );
       }
+      setPendingAtlasFollowup(null);
     },
     onError: (err, _variables, context) => {
       if (context?.optimisticCommentId) {
@@ -1382,6 +1449,8 @@ export function IssueDetail() {
             context={executionCommentContext}
             verbosity={conversationVerbosity}
             onVerbosityChange={setConversationVerbosity}
+            pendingFollowupStatus={effectivePendingComposerStatus}
+            liveFeed={issueChatLiveTransport.feed}
           />
 
           <IssueConversationComposer

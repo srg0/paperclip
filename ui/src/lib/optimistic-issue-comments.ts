@@ -1,5 +1,7 @@
 import type { Issue, IssueComment } from "@paperclipai/shared";
 
+const REOPENABLE_ISSUE_STATUSES = new Set(["done", "cancelled", "completed", "closed", "in_review"]);
+
 export interface IssueCommentReassignment {
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
@@ -110,7 +112,7 @@ export function applyOptimisticIssueCommentUpdate(
   if (!issue) return issue;
   const nextIssue: Issue = { ...issue };
 
-  if (params.reopen === true && (issue.status === "done" || issue.status === "cancelled")) {
+  if (params.reopen === true && REOPENABLE_ISSUE_STATUSES.has(issue.status)) {
     nextIssue.status = "todo";
   }
 

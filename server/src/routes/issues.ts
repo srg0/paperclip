@@ -44,9 +44,20 @@ import { pluginRegistryService } from "../services/plugin-registry.js";
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const ATLAS_BRIDGE_PLUGIN_KEY = "homio.atlas-bridge";
 const ATLAS_EXECUTION_DOCUMENT_KEY = "atlas-execution";
+const COMMENT_REOPENABLE_ISSUE_STATUSES = new Set(["done", "cancelled", "completed", "closed", "in_review"]);
 const updateIssueRouteSchema = updateIssueSchema.extend({
   interrupt: z.boolean().optional(),
 });
+
+type AtlasFollowupDispatchStatus = "accepted" | "blocked" | "not_applicable";
+
+interface AtlasFollowupResponse {
+  status: AtlasFollowupDispatchStatus;
+  requestType: "followup" | "merge_request" | "directed_agent" | null;
+  detail: string | null;
+  turnNumber: number | null;
+  turnLabel: string | null;
+}
 
 function extractAtlasTurnNumber(documentBody: string | null | undefined): number | null {
   if (typeof documentBody !== "string" || documentBody.trim().length === 0) {
@@ -116,6 +127,11 @@ function isDeliveryOrchestratorAgent(agent: {
     normalizeAgentMatcherText(agent.title),
     normalizeAgentMatcherText(agent.role),
   ].some((value) => value.includes("delivery orchestrator"));
+}
+
+function isIssueCommentReopenableStatus(status: string | null | undefined) {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  return COMMENT_REOPENABLE_ISSUE_STATUSES.has(normalized);
 }
 
 export function issueRoutes(
@@ -454,6 +470,134 @@ export function issueRoutes(
     return { project, goal: null };
   }
 
+  async function dispatchDirectedIssueComment(input: {
+    issue: {
+      id: string;
+      companyId: string;
+      identifier: string | null;
+      title: string | null;
+    };
+    comment: {
+      id: string;
+      body: string;
+    };
+    actor: ReturnType<typeof getActorInfo>;
+    targetAgentId: string;
+    interruptedRunId?: string | null;
+    source: "issue_comment_directed" | "issue_comment_reassign";
+  }): Promise<AtlasFollowupResponse> {
+    const targetAgent = await agentsSvc.getById(input.targetAgentId);
+    const targetAgentName = targetAgent?.name?.trim() || "Agent";
+
+    if (!targetAgent || targetAgent.companyId !== input.issue.companyId) {
+      const detail = "Directed agent is missing or belongs to another company.";
+      await logActivity(db, {
+        companyId: input.issue.companyId,
+        actorType: input.actor.actorType,
+        actorId: input.actor.actorId,
+        agentId: input.actor.agentId,
+        runId: input.actor.runId,
+        action: "issue.followup_blocked",
+        entityType: "issue",
+        entityId: input.issue.id,
+        details: {
+          requestType: "directed_agent",
+          targetAgentId: input.targetAgentId,
+          source: input.source,
+          commentId: input.comment.id,
+          error: detail,
+        },
+      });
+      return {
+        status: "blocked",
+        requestType: "directed_agent",
+        detail,
+        turnNumber: null,
+        turnLabel: null,
+      };
+    }
+
+    try {
+      await heartbeat.wakeup(input.targetAgentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "issue_commented",
+        payload: {
+          issueId: input.issue.id,
+          commentId: input.comment.id,
+          mutation: "comment",
+          ...(input.interruptedRunId ? { interruptedRunId: input.interruptedRunId } : {}),
+        },
+        requestedByActorType: input.actor.actorType,
+        requestedByActorId: input.actor.actorId,
+        contextSnapshot: {
+          issueId: input.issue.id,
+          taskId: input.issue.id,
+          commentId: input.comment.id,
+          wakeCommentId: input.comment.id,
+          wakeReason: "issue_commented",
+          source: input.source === "issue_comment_reassign" ? "issue.comment.reassign" : "issue.comment.directed",
+          directedCommentTargetId: input.targetAgentId,
+          ...(input.interruptedRunId ? { interruptedRunId: input.interruptedRunId } : {}),
+        },
+      });
+
+      await logActivity(db, {
+        companyId: input.issue.companyId,
+        actorType: input.actor.actorType,
+        actorId: input.actor.actorId,
+        agentId: input.actor.agentId,
+        runId: input.actor.runId,
+        action: "issue.followup_requested",
+        entityType: "issue",
+        entityId: input.issue.id,
+        details: {
+          requestType: "directed_agent",
+          targetAgentId: input.targetAgentId,
+          targetAgentName,
+          source: input.source,
+          commentId: input.comment.id,
+          detail: `${targetAgentName} получил directed follow-up и должен ответить в этом чате.`,
+        },
+      });
+
+      return {
+        status: "accepted",
+        requestType: "directed_agent",
+        detail: `${targetAgentName} принял directed follow-up. Ждём queued/running сигнал и ответ в этом issue chat.`,
+        turnNumber: null,
+        turnLabel: null,
+      };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await logActivity(db, {
+        companyId: input.issue.companyId,
+        actorType: input.actor.actorType,
+        actorId: input.actor.actorId,
+        agentId: input.actor.agentId,
+        runId: input.actor.runId,
+        action: "issue.followup_blocked",
+        entityType: "issue",
+        entityId: input.issue.id,
+        details: {
+          requestType: "directed_agent",
+          targetAgentId: input.targetAgentId,
+          targetAgentName,
+          source: input.source,
+          commentId: input.comment.id,
+          error: errorMessage,
+        },
+      });
+      return {
+        status: "blocked",
+        requestType: "directed_agent",
+        detail: errorMessage,
+        turnNumber: null,
+        turnLabel: null,
+      };
+    }
+  }
+
 async function maybeTriggerAtlasFollowupFromComment(input: {
   req: Request;
   issue: {
@@ -467,172 +611,256 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
   triggered: boolean;
   mergeRequestIntentHandled: boolean;
   mergeRequestError: string | null;
+  suppressGenericWake: boolean;
+  atlasFollowup: AtlasFollowupResponse;
 }> {
   const wantsMergeRequest = isAtlasMergeRequestIntent(input.commentBody);
+  const fallbackResult = {
+    triggered: false,
+    mergeRequestIntentHandled: false,
+    mergeRequestError: null,
+    suppressGenericWake: false,
+    atlasFollowup: {
+      status: "not_applicable" as const,
+      requestType: null,
+      detail: null,
+      turnNumber: null,
+      turnLabel: null,
+    },
+  };
   if (input.actor.actorType !== "user" || !deps?.workerManager) {
-    return {
-      triggered: false,
-      mergeRequestIntentHandled: false,
-      mergeRequestError: null,
-    };
+    return fallbackResult;
   }
 
   const executionDoc = await documentsSvc.getIssueDocumentByKey(input.issue.id, ATLAS_EXECUTION_DOCUMENT_KEY);
   if (!executionDoc?.body) {
-    return {
-      triggered: false,
-      mergeRequestIntentHandled: false,
-      mergeRequestError: null,
-    };
+    return fallbackResult;
   }
+
+  const explicitTurn = extractFollowupTurnNumber(input.commentBody);
+  const comments = explicitTurn
+    ? null
+    : await svc.listComments(input.issue.id, { order: "desc", limit: MAX_ISSUE_COMMENT_LIMIT });
+  const historyTurn = comments
+    ? comments.reduce<number | null>((maxTurn, comment) => {
+      const turn = extractFollowupTurnNumber(comment?.body ?? null);
+      if (!turn || !Number.isFinite(turn)) return maxTurn;
+      return maxTurn === null ? turn : Math.max(maxTurn, turn);
+    }, null)
+    : null;
+  const currentTurn = Math.max(
+    extractAtlasTurnNumber(executionDoc.body) ?? 0,
+    historyTurn ?? 0,
+  ) || null;
+  const nextTurn = explicitTurn
+    ?? (currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null);
+  const nextTurnLabel = nextTurn ? `TURN ${nextTurn}` : null;
 
   const plugin = await pluginRegistry.getByKey(ATLAS_BRIDGE_PLUGIN_KEY);
   if (!plugin || plugin.status !== "ready") {
-      logger.warn(
-        { issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY, pluginStatus: plugin?.status ?? "missing" },
-        "atlas follow-up requested from issue comment, but bridge plugin is not ready",
-      );
-      return wantsMergeRequest
-        ? {
-          triggered: false,
-          mergeRequestIntentHandled: true,
-          mergeRequestError: "Atlas Bridge plugin is not ready for merge-request creation",
-        }
-        : {
-          triggered: false,
-          mergeRequestIntentHandled: false,
-          mergeRequestError: null,
-        };
-    }
-    if (!deps.workerManager.getWorker(plugin.id) || !deps.workerManager.isRunning(plugin.id)) {
-      logger.warn(
-        {
-          issueId: input.issue.id,
-          pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
-          pluginId: plugin.id,
-          pluginStatus: plugin.status,
+    logger.warn(
+      { issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY, pluginStatus: plugin?.status ?? "missing" },
+      "atlas follow-up requested from issue comment, but bridge plugin is not ready",
+    );
+    return wantsMergeRequest
+      ? {
+        triggered: false,
+        mergeRequestIntentHandled: true,
+        mergeRequestError: "Atlas Bridge plugin is not ready for merge-request creation",
+        suppressGenericWake: true,
+        atlasFollowup: {
+          status: "blocked",
+          requestType: "merge_request",
+          detail: "Atlas Bridge plugin is not ready for merge-request creation",
+          turnNumber: null,
+          turnLabel: null,
         },
-        "atlas follow-up requested from issue comment, but bridge worker is not running",
-      );
-      return wantsMergeRequest
+      }
+      : {
+        triggered: false,
+        mergeRequestIntentHandled: false,
+        mergeRequestError: null,
+        suppressGenericWake: true,
+        atlasFollowup: {
+          status: "blocked",
+          requestType: "followup",
+          detail: "Atlas Bridge plugin is not ready, so the new Atlas turn was not dispatched.",
+          turnNumber: nextTurn,
+          turnLabel: nextTurnLabel,
+        },
+      };
+  }
+
+  if (!deps.workerManager.getWorker(plugin.id) || !deps.workerManager.isRunning(plugin.id)) {
+    logger.warn(
+      {
+        issueId: input.issue.id,
+        pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+        pluginId: plugin.id,
+        pluginStatus: plugin.status,
+      },
+      "atlas follow-up requested from issue comment, but bridge worker is not running",
+    );
+    return wantsMergeRequest
+      ? {
+        triggered: false,
+        mergeRequestIntentHandled: true,
+        mergeRequestError: "Atlas Bridge worker is not running for merge-request creation",
+        suppressGenericWake: true,
+        atlasFollowup: {
+          status: "blocked",
+          requestType: "merge_request",
+          detail: "Atlas Bridge worker is not running for merge-request creation",
+          turnNumber: null,
+          turnLabel: null,
+        },
+      }
+      : {
+        triggered: false,
+        mergeRequestIntentHandled: false,
+        mergeRequestError: null,
+        suppressGenericWake: true,
+        atlasFollowup: {
+          status: "blocked",
+          requestType: "followup",
+          detail: "Atlas Bridge worker is not running, so the new Atlas turn was not dispatched.",
+          turnNumber: nextTurn,
+          turnLabel: nextTurnLabel,
+        },
+      };
+  }
+  const commentContext = wantsMergeRequest
+    ? { enrichedBody: input.commentBody, commentImages: [] as Array<Record<string, unknown>> }
+    : await resolveAtlasFollowupCommentContext({
+      req: input.req,
+      issueId: input.issue.id,
+      companyId: input.issue.companyId,
+      commentId: input.commentId,
+      commentBody: input.commentBody,
+    });
+
+  try {
+    await deps.workerManager.call(plugin.id, "performAction", {
+      key: wantsMergeRequest
+        ? "atlas-bridge-open-issue-merge-request"
+        : "atlas-bridge-followup-issue-execution",
+      params: wantsMergeRequest
         ? {
-          triggered: false,
-          mergeRequestIntentHandled: true,
-          mergeRequestError: "Atlas Bridge worker is not running for merge-request creation",
+          issueId: input.issue.id,
+          companyId: input.issue.companyId,
+          commentId: input.commentId,
         }
         : {
-          triggered: false,
-          mergeRequestIntentHandled: false,
-          mergeRequestError: null,
-        };
-    }
-
-    const explicitTurn = extractFollowupTurnNumber(input.commentBody);
-    const comments = explicitTurn
-      ? null
-      : await svc.listComments(input.issue.id, { order: "desc", limit: MAX_ISSUE_COMMENT_LIMIT });
-    const historyTurn = comments
-      ? comments.reduce<number | null>((maxTurn, comment) => {
-        const turn = extractFollowupTurnNumber(comment?.body ?? null);
-        if (!turn || !Number.isFinite(turn)) return maxTurn;
-        return maxTurn === null ? turn : Math.max(maxTurn, turn);
-      }, null)
-      : null;
-    const currentTurn = Math.max(
-      extractAtlasTurnNumber(executionDoc.body) ?? 0,
-      historyTurn ?? 0,
-    ) || null;
-    const nextTurn = explicitTurn
-      ?? (currentTurn && Number.isFinite(currentTurn) ? currentTurn + 1 : null);
-    const commentContext = wantsMergeRequest
-      ? { enrichedBody: input.commentBody, commentImages: [] as Array<Record<string, unknown>> }
-      : await resolveAtlasFollowupCommentContext({
-        req: input.req,
-        issueId: input.issue.id,
-        companyId: input.issue.companyId,
-        commentId: input.commentId,
-        commentBody: input.commentBody,
-      });
-
-    try {
-      await deps.workerManager.call(plugin.id, "performAction", {
-        key: wantsMergeRequest
-          ? "atlas-bridge-open-issue-merge-request"
-          : "atlas-bridge-followup-issue-execution",
-        params: wantsMergeRequest
-          ? {
-            issueId: input.issue.id,
-            companyId: input.issue.companyId,
-            commentId: input.commentId,
-          }
-          : {
-            issueId: input.issue.id,
-            companyId: input.issue.companyId,
-            commentId: input.commentId,
-            request: commentContext.enrichedBody,
-            commentImages: commentContext.commentImages,
-            deferInitialSync: true,
-            ...(nextTurn ? { turnNumber: nextTurn, turnLabel: `TURN ${nextTurn}` } : {}),
-          },
-        renderEnvironment: null,
-      }, 15_000);
+          issueId: input.issue.id,
+          companyId: input.issue.companyId,
+          commentId: input.commentId,
+          request: commentContext.enrichedBody,
+          commentImages: commentContext.commentImages,
+          deferInitialSync: true,
+          ...(nextTurn ? { turnNumber: nextTurn, turnLabel: nextTurnLabel } : {}),
+        },
+      renderEnvironment: null,
+    }, 15_000);
+    await logActivity(db, {
+      companyId: input.issue.companyId,
+      actorType: input.actor.actorType,
+      actorId: input.actor.actorId,
+      agentId: input.actor.agentId,
+      runId: input.actor.runId,
+      action: wantsMergeRequest ? "issue.mr_requested" : "issue.followup_requested",
+      entityType: "issue",
+      entityId: input.issue.id,
+      details: {
+        pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+        requestType: wantsMergeRequest ? "merge_request" : "followup",
+        nextTurn,
+        source: "issue_comment",
+      },
+    });
+    return {
+      triggered: !wantsMergeRequest,
+      mergeRequestIntentHandled: wantsMergeRequest,
+      mergeRequestError: null,
+      suppressGenericWake: true,
+      atlasFollowup: {
+        status: "accepted",
+        requestType: wantsMergeRequest ? "merge_request" : "followup",
+        detail: wantsMergeRequest
+          ? "Atlas принял запрос на создание merge request."
+          : "Atlas принял новый follow-up и должен ответить в этом issue thread.",
+        turnNumber: wantsMergeRequest ? null : nextTurn,
+        turnLabel: wantsMergeRequest ? null : nextTurnLabel,
+      },
+    };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { err, issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY },
+      "failed to trigger atlas follow-up from issue comment",
+    );
+    if (wantsMergeRequest) {
       await logActivity(db, {
         companyId: input.issue.companyId,
         actorType: input.actor.actorType,
         actorId: input.actor.actorId,
         agentId: input.actor.agentId,
         runId: input.actor.runId,
-        action: wantsMergeRequest ? "issue.mr_requested" : "issue.followup_requested",
+        action: "issue.mr_request_blocked",
         entityType: "issue",
         entityId: input.issue.id,
         details: {
           pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
-          requestType: wantsMergeRequest ? "merge_request" : "followup",
-          nextTurn,
           source: "issue_comment",
+          commentId: input.commentId,
+          error: errorMessage,
         },
       });
       return {
-        triggered: true,
-        mergeRequestIntentHandled: wantsMergeRequest,
-        mergeRequestError: null,
-      };
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.warn(
-        { err, issueId: input.issue.id, pluginKey: ATLAS_BRIDGE_PLUGIN_KEY },
-        "failed to trigger atlas follow-up from issue comment",
-      );
-      if (wantsMergeRequest) {
-        await logActivity(db, {
-          companyId: input.issue.companyId,
-          actorType: input.actor.actorType,
-          actorId: input.actor.actorId,
-          agentId: input.actor.agentId,
-          runId: input.actor.runId,
-          action: "issue.mr_request_blocked",
-          entityType: "issue",
-          entityId: input.issue.id,
-          details: {
-            pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
-            source: "issue_comment",
-            commentId: input.commentId,
-            error: errorMessage,
-          },
-        });
-        return {
-          triggered: false,
-          mergeRequestIntentHandled: true,
-          mergeRequestError: errorMessage,
-        };
-      }
-      return {
         triggered: false,
-        mergeRequestIntentHandled: false,
-        mergeRequestError: null,
+        mergeRequestIntentHandled: true,
+        mergeRequestError: errorMessage,
+        suppressGenericWake: true,
+        atlasFollowup: {
+          status: "blocked",
+          requestType: "merge_request",
+          detail: errorMessage,
+          turnNumber: null,
+          turnLabel: null,
+        },
       };
     }
+    await logActivity(db, {
+      companyId: input.issue.companyId,
+      actorType: input.actor.actorType,
+      actorId: input.actor.actorId,
+      agentId: input.actor.agentId,
+      runId: input.actor.runId,
+      action: "issue.followup_blocked",
+      entityType: "issue",
+      entityId: input.issue.id,
+      details: {
+        pluginKey: ATLAS_BRIDGE_PLUGIN_KEY,
+        source: "issue_comment",
+        commentId: input.commentId,
+        error: errorMessage,
+        turnNumber: nextTurn,
+      },
+    });
+    return {
+      triggered: false,
+      mergeRequestIntentHandled: false,
+      mergeRequestError: null,
+      suppressGenericWake: true,
+      atlasFollowup: {
+        status: "blocked",
+        requestType: "followup",
+        detail: errorMessage,
+        turnNumber: nextTurn,
+        turnLabel: nextTurnLabel,
+      },
+    };
   }
+}
 
   // Resolve issue identifiers (e.g. "PAP-39") to UUIDs for all /issues/:id routes
   router.param("id", async (req, res, next, rawId) => {
@@ -1443,7 +1671,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
     if (!(await assertAgentRunCheckoutOwnership(req, res, existing))) return;
 
     const actor = getActorInfo(req);
-    const isClosed = existing.status === "done" || existing.status === "cancelled";
+    const isClosed = isIssueCommentReopenableStatus(existing.status);
     const {
       comment: commentBody,
       commentTargetAgentId: commentTargetAgentIdRaw,
@@ -1577,6 +1805,13 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
     let atlasFollowupTriggered = false;
     let atlasMergeRequestHandled = false;
     let atlasMergeRequestError: string | null = null;
+    let atlasFollowup: AtlasFollowupResponse = {
+      status: "not_applicable",
+      requestType: null,
+      detail: null,
+      turnNumber: null,
+      turnLabel: null,
+    };
     if (commentBody) {
       comment = await svc.addComment(id, commentBody, {
         agentId: actor.agentId ?? undefined,
@@ -1614,9 +1849,36 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
         atlasFollowupTriggered = atlasCommentResult.triggered;
         atlasMergeRequestHandled = atlasCommentResult.mergeRequestIntentHandled;
         atlasMergeRequestError = atlasCommentResult.mergeRequestError;
+        atlasFollowup = atlasCommentResult.atlasFollowup;
+      } else {
+        const directTargetAgentId = directedCommentTargetId ?? issue.assigneeAgentId;
+        if (directTargetAgentId) {
+          atlasFollowup = await dispatchDirectedIssueComment({
+            issue: {
+              id: issue.id,
+              companyId: issue.companyId,
+              identifier: issue.identifier ?? null,
+              title: issue.title ?? null,
+            },
+            comment: {
+              id: comment.id,
+              body: comment.body,
+            },
+            actor,
+            targetAgentId: directTargetAgentId,
+            interruptedRunId,
+            source: directedCommentReassignment ? "issue_comment_reassign" : "issue_comment_directed",
+          });
+        }
       }
 
     }
+
+    const shouldSkipGenericWake =
+      atlasFollowupTriggered
+      || atlasMergeRequestHandled
+      || atlasFollowup.status === "blocked"
+      || atlasFollowup.requestType === "directed_agent";
 
     const assigneeChanged = assigneeWillChange;
     const statusChangedFromBacklog =
@@ -1628,31 +1890,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
 
-      if (commentBody && comment && directedCommentTargetId) {
-        wakeups.set(directedCommentTargetId, {
-          source: "automation",
-          triggerDetail: "system",
-          reason: "issue_commented",
-          payload: {
-            issueId: issue.id,
-            commentId: comment.id,
-            mutation: "comment",
-            ...(interruptedRunId ? { interruptedRunId } : {}),
-          },
-          requestedByActorType: actor.actorType,
-          requestedByActorId: actor.actorId,
-          contextSnapshot: {
-            issueId: issue.id,
-            taskId: issue.id,
-            commentId: comment.id,
-            wakeCommentId: comment.id,
-            source: assigneeChanged ? "issue.comment.reassign" : "issue.comment.directed",
-            wakeReason: "issue_commented",
-            directedCommentTargetId,
-            ...(interruptedRunId ? { interruptedRunId } : {}),
-          },
-        });
-      } else if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog" && !atlasMergeRequestHandled) {
+      if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog" && !shouldSkipGenericWake) {
         if (commentBody && comment) {
           wakeups.set(issue.assigneeAgentId, {
             source: "automation",
@@ -1697,7 +1935,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
         }
       }
 
-      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId && !atlasMergeRequestHandled) {
+      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId && !shouldSkipGenericWake) {
           wakeups.set(issue.assigneeAgentId, {
             source: "automation",
             triggerDetail: "system",
@@ -1717,7 +1955,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
         });
       }
 
-      if (commentBody && comment && !atlasMergeRequestHandled) {
+      if (commentBody && comment && !shouldSkipGenericWake) {
         let mentionedIds: string[] = [];
         try {
           mentionedIds = await svc.findMentionedAgents(issue.companyId, commentBody);
@@ -1760,6 +1998,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
       atlasFollowupTriggered,
       atlasMergeRequestHandled,
       atlasMergeRequestError,
+      atlasFollowup,
       interruptedRunId,
     });
   });
@@ -1976,7 +2215,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
       typeof req.body.commentTargetAgentId === "string" && req.body.commentTargetAgentId.trim().length > 0
         ? req.body.commentTargetAgentId.trim()
         : null;
-    const isClosed = issue.status === "done" || issue.status === "cancelled";
+    const isClosed = isIssueCommentReopenableStatus(issue.status);
     const shouldInterruptForDirectedComment =
       Boolean(directedCommentTargetId) &&
       req.actor.type === "board" &&
@@ -2075,6 +2314,14 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
         triggered: false,
         mergeRequestIntentHandled: false,
         mergeRequestError: null,
+        suppressGenericWake: false,
+        atlasFollowup: {
+          status: "not_applicable" as const,
+          requestType: null,
+          detail: null,
+          turnNumber: null,
+          turnLabel: null,
+        },
       }
       : await maybeTriggerAtlasFollowupFromComment({
         req,
@@ -2086,6 +2333,30 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
     const atlasFollowupTriggered = atlasCommentResult.triggered;
     const atlasMergeRequestHandled = atlasCommentResult.mergeRequestIntentHandled;
     const atlasMergeRequestError = atlasCommentResult.mergeRequestError;
+    let atlasFollowup = atlasCommentResult.atlasFollowup;
+    if (directedCommentTargetId) {
+      atlasFollowup = await dispatchDirectedIssueComment({
+        issue: {
+          id: currentIssue.id,
+          companyId: currentIssue.companyId,
+          identifier: currentIssue.identifier ?? null,
+          title: currentIssue.title ?? null,
+        },
+        comment: {
+          id: comment.id,
+          body: comment.body,
+        },
+        actor,
+        targetAgentId: directedCommentTargetId,
+        interruptedRunId,
+        source: "issue_comment_directed",
+      });
+    }
+    const shouldSkipGenericWake =
+      atlasFollowupTriggered
+      || atlasMergeRequestHandled
+      || atlasCommentResult.suppressGenericWake
+      || atlasFollowup.requestType === "directed_agent";
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {
@@ -2094,31 +2365,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
       const actorIsAgent = actor.actorType === "agent";
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const skipWake = selfComment || isClosed;
-      if (directedCommentTargetId) {
-        wakeups.set(directedCommentTargetId, {
-          source: "automation",
-          triggerDetail: "system",
-          reason: "issue_commented",
-          payload: {
-            issueId: currentIssue.id,
-            commentId: comment.id,
-            mutation: "comment",
-            ...(interruptedRunId ? { interruptedRunId } : {}),
-          },
-          requestedByActorType: actor.actorType,
-          requestedByActorId: actor.actorId,
-          contextSnapshot: {
-            issueId: currentIssue.id,
-            taskId: currentIssue.id,
-            commentId: comment.id,
-            wakeCommentId: comment.id,
-            wakeReason: "issue_commented",
-            source: "issue.comment.directed",
-            directedCommentTargetId,
-            ...(interruptedRunId ? { interruptedRunId } : {}),
-          },
-        });
-      } else if (assigneeId && !atlasFollowupTriggered && !atlasMergeRequestHandled && (reopened || !skipWake)) {
+      if (assigneeId && !shouldSkipGenericWake && (reopened || !skipWake)) {
         if (reopened) {
           wakeups.set(assigneeId, {
             source: "automation",
@@ -2170,7 +2417,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
       }
 
       let mentionedIds: string[] = [];
-      if (!atlasMergeRequestHandled) {
+      if (!shouldSkipGenericWake) {
         try {
           mentionedIds = await svc.findMentionedAgents(issue.companyId, req.body.body);
         } catch (err) {
@@ -2212,6 +2459,7 @@ async function maybeTriggerAtlasFollowupFromComment(input: {
       atlasFollowupTriggered,
       atlasMergeRequestHandled,
       atlasMergeRequestError,
+      atlasFollowup,
       interruptedRunId,
     });
   });

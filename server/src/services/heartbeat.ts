@@ -354,6 +354,28 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function readIssueIdFromContextSnapshot(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+): string | null {
+  return readNonEmptyString(contextSnapshot?.issueId)
+    ?? readNonEmptyString(contextSnapshot?.taskId)
+    ?? null;
+}
+
+function buildLiveRunPayload(
+  run: typeof heartbeatRuns.$inferSelect,
+  extra: Record<string, unknown> = {},
+) {
+  const contextSnapshot = parseObject(run.contextSnapshot);
+  const issueId = readIssueIdFromContextSnapshot(contextSnapshot);
+  return {
+    runId: run.id,
+    agentId: run.agentId,
+    ...(issueId ? { issueId } : {}),
+    ...extra,
+  };
+}
+
 function normalizeLedgerBillingType(value: unknown): BillingType {
   const raw = readNonEmptyString(value);
   switch (raw) {
@@ -1570,9 +1592,7 @@ export function heartbeatService(db: Db) {
       publishLiveEvent({
         companyId: updated.companyId,
         type: "heartbeat.run.status",
-        payload: {
-          runId: updated.id,
-          agentId: updated.agentId,
+        payload: buildLiveRunPayload(updated, {
           status: updated.status,
           invocationSource: updated.invocationSource,
           triggerDetail: updated.triggerDetail,
@@ -1580,7 +1600,7 @@ export function heartbeatService(db: Db) {
           errorCode: updated.errorCode ?? null,
           startedAt: updated.startedAt ? new Date(updated.startedAt).toISOString() : null,
           finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
-        },
+        }),
       });
     }
 
@@ -1635,9 +1655,7 @@ export function heartbeatService(db: Db) {
     publishLiveEvent({
       companyId: run.companyId,
       type: "heartbeat.run.event",
-      payload: {
-        runId: run.id,
-        agentId: run.agentId,
+      payload: buildLiveRunPayload(run, {
         seq,
         eventType: event.eventType,
         stream: event.stream ?? null,
@@ -1645,7 +1663,7 @@ export function heartbeatService(db: Db) {
         color: event.color ?? null,
         message: sanitizedMessage ?? null,
         payload: sanitizedPayload ?? null,
-      },
+      }),
     });
   }
 
@@ -1777,13 +1795,11 @@ export function heartbeatService(db: Db) {
     publishLiveEvent({
       companyId: queued.companyId,
       type: "heartbeat.run.queued",
-      payload: {
-        runId: queued.id,
-        agentId: queued.agentId,
+      payload: buildLiveRunPayload(queued, {
         invocationSource: queued.invocationSource,
         triggerDetail: queued.triggerDetail,
         wakeupRequestId: queued.wakeupRequestId,
-      },
+      }),
     });
 
     await appendRunEvent(queued, 1, {
@@ -1857,9 +1873,7 @@ export function heartbeatService(db: Db) {
     publishLiveEvent({
       companyId: claimed.companyId,
       type: "heartbeat.run.status",
-      payload: {
-        runId: claimed.id,
-        agentId: claimed.agentId,
+      payload: buildLiveRunPayload(claimed, {
         status: claimed.status,
         invocationSource: claimed.invocationSource,
         triggerDetail: claimed.triggerDetail,
@@ -1867,7 +1881,7 @@ export function heartbeatService(db: Db) {
         errorCode: claimed.errorCode ?? null,
         startedAt: claimed.startedAt ? new Date(claimed.startedAt).toISOString() : null,
         finishedAt: claimed.finishedAt ? new Date(claimed.finishedAt).toISOString() : null,
-      },
+      }),
     });
 
     await setWakeupStatus(claimed.wakeupRequestId, "claimed", { claimedAt });
@@ -2643,14 +2657,12 @@ export function heartbeatService(db: Db) {
         publishLiveEvent({
           companyId: run.companyId,
           type: "heartbeat.run.log",
-          payload: {
-            runId: run.id,
-            agentId: run.agentId,
+          payload: buildLiveRunPayload(run, {
             ts,
             stream,
             chunk: payloadChunk,
             truncated: payloadChunk.length !== sanitizedChunk.length,
-          },
+          }),
         });
       };
       for (const warning of runtimeWorkspaceWarnings) {
@@ -3182,13 +3194,11 @@ export function heartbeatService(db: Db) {
     publishLiveEvent({
       companyId: promotedRun.companyId,
       type: "heartbeat.run.queued",
-      payload: {
-        runId: promotedRun.id,
-        agentId: promotedRun.agentId,
+      payload: buildLiveRunPayload(promotedRun, {
         invocationSource: promotedRun.invocationSource,
         triggerDetail: promotedRun.triggerDetail,
         wakeupRequestId: promotedRun.wakeupRequestId,
-      },
+      }),
     });
 
     await startNextQueuedRunForAgent(promotedRun.agentId);
@@ -3647,13 +3657,11 @@ export function heartbeatService(db: Db) {
       publishLiveEvent({
         companyId: newRun.companyId,
         type: "heartbeat.run.queued",
-        payload: {
-          runId: newRun.id,
-          agentId: newRun.agentId,
+        payload: buildLiveRunPayload(newRun, {
           invocationSource: newRun.invocationSource,
           triggerDetail: newRun.triggerDetail,
           wakeupRequestId: newRun.wakeupRequestId,
-        },
+        }),
       });
 
       await startNextQueuedRunForAgent(agent.id);
@@ -3755,13 +3763,11 @@ export function heartbeatService(db: Db) {
     publishLiveEvent({
       companyId: newRun.companyId,
       type: "heartbeat.run.queued",
-      payload: {
-        runId: newRun.id,
-        agentId: newRun.agentId,
+      payload: buildLiveRunPayload(newRun, {
         invocationSource: newRun.invocationSource,
         triggerDetail: newRun.triggerDetail,
         wakeupRequestId: newRun.wakeupRequestId,
-      },
+      }),
     });
 
     await startNextQueuedRunForAgent(agent.id);
