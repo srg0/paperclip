@@ -295,6 +295,11 @@ async function waitForVisibleFollowupSignal(thread: Locator) {
   }, { timeout: 15_000 }).toMatch(/ack|accepted|queued|running|blocked|completed|failed/);
 }
 
+async function expectAckAndFollowupStatus(thread: Locator) {
+  await expect(thread.getByText(/Принял follow-up/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(thread.getByTestId("issue-followup-status")).toBeVisible({ timeout: 15_000 });
+}
+
 function withOpsParam(issuePath: string) {
   const separator = issuePath.includes("?") ? "&" : "?";
   return `${issuePath}${separator}ops=1`;
@@ -363,6 +368,7 @@ test.describe("Issue single chat live", () => {
 
     await expect(thread.getByText(marker).first()).toBeVisible({ timeout: 10_000 });
     await waitForVisibleFollowupSignal(thread);
+    await expectAckAndFollowupStatus(thread);
     expectNoRealtimeSocketErrors(realtimeProbe, "follow-up submit");
 
     await saveScreenshot(page, "issue-single-chat-followup-submitted.png");
@@ -379,6 +385,7 @@ test.describe("Issue single chat live", () => {
     const reloadedThread = page.getByTestId("issue-chat-thread");
     await expect(reloadedThread.getByText(marker).first()).toBeVisible({ timeout: 15_000 });
     await waitForVisibleFollowupSignal(reloadedThread);
+    await expectAckAndFollowupStatus(reloadedThread);
     expectNoRealtimeSocketErrors(realtimeProbe, "after reload");
 
     await saveScreenshot(page, "issue-single-chat-followup-reloaded.png");

@@ -16,6 +16,7 @@ export type IssueUpdateResponse = Issue & {
 };
 
 export type IssueCommentResponse = IssueUpdateResponse & {
+  ackComment?: IssueComment | null;
   atlasFollowupTriggered?: boolean;
   atlasFollowup?: {
     status: "accepted" | "blocked" | "not_applicable";

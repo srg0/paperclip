@@ -10,6 +10,7 @@ import {
   checkoutIssueSchema,
   createIssueSchema,
   linkIssueApprovalSchema,
+  type IssueComment,
   issueDocumentKeySchema,
   restoreIssueDocumentRevisionSchema,
   updateIssueWorkProductSchema,
@@ -57,6 +58,7 @@ interface AtlasFollowupResponse {
   detail: string | null;
   turnNumber: number | null;
   turnLabel: string | null;
+  ackComment?: IssueComment | null;
 }
 
 function extractAtlasTurnNumber(documentBody: string | null | undefined): number | null {
@@ -757,6 +759,10 @@ export function issueRoutes(
             source: "directed_followup_ack",
           },
         });
+        return {
+          ...atlasDispatch.atlasFollowup,
+          ackComment,
+        };
       }
       return atlasDispatch.atlasFollowup;
     }
@@ -835,6 +841,7 @@ export function issueRoutes(
         detail: `${targetAgentName} принял directed follow-up. Ждём queued/running сигнал и ответ в этом issue chat.`,
         turnNumber: null,
         turnLabel: null,
+        ackComment,
       };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -2674,6 +2681,7 @@ export function issueRoutes(
     res.status(201).json({
       ...currentIssue,
       comment,
+      ackComment: atlasFollowup.ackComment ?? null,
       atlasFollowupTriggered,
       atlasMergeRequestHandled,
       atlasMergeRequestError,

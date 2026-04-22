@@ -831,6 +831,12 @@ export function IssueDetail() {
           (current) => upsertIssueComment(current, response.comment!),
         );
       }
+      if (response.ackComment) {
+        queryClient.setQueryData<IssueComment[]>(
+          queryKeys.issues.comments(issueId!),
+          (current) => upsertIssueComment(current, response.ackComment!),
+        );
+      }
       if (response.id) {
         queryClient.setQueryData<Issue>(queryKeys.issues.detail(issueId!), response);
       }

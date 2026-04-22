@@ -75,4 +75,58 @@ describe("IssueConversationSurface", () => {
       root.unmount();
     });
   });
+
+  it("keeps follow-up status visible and renders live feed in the main thread", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <IssueConversationSurface
+          chatMessages={[
+            {
+              id: "msg-user-1",
+              speaker: "user",
+              body: "Ответь сюда коротко.",
+              createdAt: "2026-04-22T07:20:00.000Z",
+              tone: "info",
+            },
+            {
+              id: "msg-assistant-1",
+              speaker: "assistant",
+              body: "Принял follow-up.",
+              createdAt: "2026-04-22T07:20:02.000Z",
+              tone: "working",
+            },
+          ]}
+          pendingFollowupStatus={{
+            state: "running",
+            title: "Running",
+            summary: "Atlas Executor",
+            detail: "TURN 10 attached",
+            turnLabel: "TURN 10",
+          }}
+          liveFeed={[
+            {
+              key: "feed-1",
+              createdAt: "2026-04-22T07:20:04.000Z",
+              title: "Atlas Executor: live output",
+              summary: "Executor взял задачу в работу",
+              tone: "working",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const status = container.querySelector('[data-testid="issue-followup-status"]');
+    expect(status).not.toBeNull();
+    expect(status?.getAttribute("data-state")).toBe("running");
+    expect(container.textContent).toContain("TURN 10");
+    expect(container.textContent).toContain("Executor взял задачу в работу");
+    expect(container.querySelectorAll('[data-testid="issue-live-feed-item"]').length).toBe(1);
+
+    act(() => {
+      root.unmount();
+    });
+  });
 });
