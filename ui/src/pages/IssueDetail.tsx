@@ -36,7 +36,12 @@ import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
 import { IssueConversationComposer } from "../components/issue-conversation/IssueConversationComposer";
 import { IssueConversationSurface } from "../components/issue-conversation/IssueConversationSurface";
-import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "../lib/issue-execution-flow";
+import {
+  buildIssueExecutionHeaderModel,
+  buildPendingAtlasFollowupStatus,
+  parseExecutionDocument,
+  shouldUsePendingAtlasLiveSignal,
+} from "../lib/issue-execution-flow";
 import { useIssueChatLiveTransport } from "../hooks/useIssueChatLiveTransport";
 import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "../lib/issue-execution-turns";
 import type { IssueConversationVerbosity } from "../lib/issue-conversation-model";
@@ -728,6 +733,16 @@ export function IssueDetail() {
     issue: issue ? { id: issue.id, identifier: issue.identifier } : null,
     agents: agents ?? null,
   });
+  const trustedLiveComposerSignal = useMemo(() => {
+    if (!shouldUsePendingAtlasLiveSignal({
+      signal: issueChatLiveTransport.signal,
+      hasLiveRun: Boolean(latestLiveRun),
+      hasPendingFollowup: Boolean(pendingAtlasFollowup),
+    })) {
+      return null;
+    }
+    return issueChatLiveTransport.signal;
+  }, [issueChatLiveTransport.signal, latestLiveRun, pendingAtlasFollowup]);
   const effectivePendingComposerStatus = useMemo(() => {
     if (pendingAtlasFollowup) {
       return buildPendingAtlasFollowupStatus({
@@ -741,25 +756,25 @@ export function IssueDetail() {
           turnNumber: pendingAtlasFollowup.turnNumber,
           turnLabel: pendingAtlasFollowup.turnLabel,
         },
-        live: issueChatLiveTransport.signal
+        live: trustedLiveComposerSignal
           ? {
-            state: issueChatLiveTransport.signal.state,
-            title: issueChatLiveTransport.signal.title,
-            summary: issueChatLiveTransport.signal.summary,
-            detail: issueChatLiveTransport.signal.detail,
-            turnLabel: issueChatLiveTransport.signal.turnLabel,
+            state: trustedLiveComposerSignal.state,
+            title: trustedLiveComposerSignal.title,
+            summary: trustedLiveComposerSignal.summary,
+            detail: trustedLiveComposerSignal.detail,
+            turnLabel: trustedLiveComposerSignal.turnLabel,
           }
           : null,
       });
     }
 
-    if (issueChatLiveTransport.signal) {
+    if (trustedLiveComposerSignal) {
       return {
-        state: issueChatLiveTransport.signal.state,
-        title: issueChatLiveTransport.signal.title,
-        summary: issueChatLiveTransport.signal.summary,
-        detail: issueChatLiveTransport.signal.detail,
-        turnLabel: issueChatLiveTransport.signal.turnLabel,
+        state: trustedLiveComposerSignal.state,
+        title: trustedLiveComposerSignal.title,
+        summary: trustedLiveComposerSignal.summary,
+        detail: trustedLiveComposerSignal.detail,
+        turnLabel: trustedLiveComposerSignal.turnLabel,
       };
     }
 
@@ -777,7 +792,7 @@ export function IssueDetail() {
     }
 
     return null;
-  }, [issueChatLiveTransport.signal, latestLiveRun, parsedExecutionDocument, pendingAtlasFollowup]);
+  }, [trustedLiveComposerSignal, latestLiveRun, parsedExecutionDocument, pendingAtlasFollowup]);
   const pendingComposerStatusCard = effectivePendingComposerStatus ? (
     <div
       className={cn(

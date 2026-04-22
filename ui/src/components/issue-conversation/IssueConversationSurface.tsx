@@ -93,6 +93,7 @@ function ArtifactChip({ artifact }: { artifact: IssueConversationArtifact }) {
 
 function PhaseBundleRow({ bundle, defaultOpen = false }: { bundle: IssueConversationPhaseBundle; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
+  const bundleItems = bundle.items?.filter(Boolean) ?? [];
   return (
     <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2">
       <button
@@ -112,8 +113,17 @@ function PhaseBundleRow({ bundle, defaultOpen = false }: { bundle: IssueConversa
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
       </button>
       {open ? (
-        <div className="pt-2 pl-6 text-xs leading-5 text-muted-foreground">
-          {bundle.summary}
+        <div className="pt-2 pl-6 text-xs leading-5 text-muted-foreground space-y-2">
+          <div>{bundle.summary}</div>
+          {bundleItems.length > 0 ? (
+            <div className="space-y-1.5">
+              {bundleItems.map((item, index) => (
+                <div key={`${bundle.id}-${index}`} className="rounded-lg border border-border/50 bg-background/60 px-2.5 py-2 text-[12px] leading-5 text-foreground/90">
+                  {item}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

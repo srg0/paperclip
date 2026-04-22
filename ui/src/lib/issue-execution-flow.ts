@@ -103,6 +103,15 @@ export interface PendingAtlasFollowupStatus {
   turnLabel: string | null;
 }
 
+export interface PendingAtlasLiveSignalInput {
+  state: "accepted" | "queued" | "running" | "completed" | "failed" | "blocked";
+  title: string;
+  summary: string;
+  detail: string | null;
+  turnLabel: string | null;
+  updatedAt: string;
+}
+
 type StageDefinition = {
   key: IssueExecutionStageKey;
   label: string;
@@ -418,6 +427,28 @@ export function buildPendingAtlasFollowupStatus(input: {
     detail: null,
     turnLabel,
   };
+}
+
+export function shouldUsePendingAtlasLiveSignal(input: {
+  signal: PendingAtlasLiveSignalInput | null;
+  hasLiveRun: boolean;
+  hasPendingFollowup: boolean;
+  now?: number;
+}): boolean {
+  const { signal, hasLiveRun, hasPendingFollowup } = input;
+  if (!signal) return false;
+  if (hasLiveRun || hasPendingFollowup) return true;
+
+  const updatedAtMs = new Date(signal.updatedAt).getTime();
+  if (!Number.isFinite(updatedAtMs)) return false;
+
+  const ageMs = (input.now ?? Date.now()) - updatedAtMs;
+  const maxAgeMs =
+    signal.state === "accepted" || signal.state === "queued" || signal.state === "running"
+      ? 15_000
+      : 8_000;
+
+  return ageMs <= maxAgeMs;
 }
 
 function normalizeStageKey(value: string | null | undefined): IssueExecutionStageKey | null {

@@ -99,6 +99,9 @@ describe("buildIssueConversationModel", () => {
     expect(pendingTurn?.summary).toContain("slot ai01");
     expect(pendingTurn?.summary).toContain("2 earlier messages folded");
     expect(pendingTurn?.nextAction).toContain("2 earlier follow-up messages");
+    const messagesBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Messages");
+    expect(messagesBundle?.itemCount).toBe(2);
+    expect(messagesBundle?.items).toEqual(["старый follow-up 1", "старый follow-up 2"]);
   });
 
   it("does not invent a queued turn when no live launch exists", () => {
@@ -115,5 +118,7 @@ describe("buildIssueConversationModel", () => {
     expect(pendingTurn?.statusLabel).toBe("Waiting");
     expect(pendingTurn?.summary).toContain("No live run yet");
     expect(pendingTurn?.nextAction).toContain("2 earlier follow-up messages");
+    const messagesBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Messages");
+    expect(messagesBundle?.items).toEqual(["старый follow-up 1", "старый follow-up 2"]);
   });
 });

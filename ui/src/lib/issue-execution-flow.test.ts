@@ -2,7 +2,12 @@
 
 import { describe, expect, it } from "vitest";
 import type { Agent, Issue, IssueDocument } from "@paperclipai/shared";
-import { buildIssueExecutionHeaderModel, buildPendingAtlasFollowupStatus, parseExecutionDocument } from "./issue-execution-flow";
+import {
+  buildIssueExecutionHeaderModel,
+  buildPendingAtlasFollowupStatus,
+  parseExecutionDocument,
+  shouldUsePendingAtlasLiveSignal,
+} from "./issue-execution-flow";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -290,6 +295,40 @@ describe("buildPendingAtlasFollowupStatus", () => {
     expect(status.state).toBe("queued");
     expect(status.title).toBe("Starting");
     expect(status.turnLabel).toBe("TURN 3");
+  });
+});
+
+describe("shouldUsePendingAtlasLiveSignal", () => {
+  it("drops stale running websocket signals when there is no live run and no pending follow-up", () => {
+    expect(shouldUsePendingAtlasLiveSignal({
+      signal: {
+        state: "running",
+        title: "Running",
+        summary: "TURN 5",
+        detail: null,
+        turnLabel: "TURN 5",
+        updatedAt: "2026-04-15T11:15:00.000Z",
+      },
+      hasLiveRun: false,
+      hasPendingFollowup: false,
+      now: new Date("2026-04-15T11:15:20.500Z").getTime(),
+    })).toBe(false);
+  });
+
+  it("keeps websocket signals while a live run is still active", () => {
+    expect(shouldUsePendingAtlasLiveSignal({
+      signal: {
+        state: "running",
+        title: "Running",
+        summary: "TURN 5",
+        detail: null,
+        turnLabel: "TURN 5",
+        updatedAt: "2026-04-15T11:15:00.000Z",
+      },
+      hasLiveRun: true,
+      hasPendingFollowup: false,
+      now: new Date("2026-04-15T11:25:00.000Z").getTime(),
+    })).toBe(true);
   });
 });
 

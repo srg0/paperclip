@@ -19,6 +19,7 @@ export interface IssueConversationPhaseBundle {
   status: "pending" | "running" | "completed" | "failed";
   summary: string;
   itemCount?: number;
+  items?: string[];
 }
 
 export interface IssueConversationTurnCard {
@@ -190,11 +191,15 @@ function buildPhaseBundles(turn: IssueExecutionTurn, status: IssueConversationTu
             : "completed",
         summary: summary || `${label} updated this turn.`,
         itemCount: 1,
+        items: summary ? [summary] : [],
       });
       continue;
     }
     existing.itemCount = (existing.itemCount ?? 1) + 1;
     if (summary) existing.summary = summary;
+    if (summary && !existing.items?.includes(summary)) {
+      existing.items = [...(existing.items ?? []), summary];
+    }
     if (status === "running" && key === "report") existing.status = "pending";
   }
   return [...bundles.values()];
@@ -327,6 +332,10 @@ function buildPendingTurnCards(
 
   const latestRequest = cleanMarkdownText(pendingUserRequests[pendingUserRequests.length - 1] ?? "");
   const hiddenCount = Math.max(0, pendingUserRequests.length - 1);
+  const hiddenMessages = pendingUserRequests
+    .slice(0, -1)
+    .map((message) => cleanMarkdownText(message))
+    .filter(Boolean);
   const status: IssueConversationTurnCard["status"] = primaryLiveRun?.status === "running"
     ? "running"
     : primaryLiveRun?.status === "queued"
@@ -373,6 +382,7 @@ function buildPendingTurnCards(
             status: "pending" as const,
             summary: `${hiddenCount} earlier follow-up message${hiddenCount === 1 ? "" : "s"} folded`,
             itemCount: hiddenCount,
+            items: hiddenMessages,
           }]
         : []),
     ],
