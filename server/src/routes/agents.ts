@@ -121,6 +121,14 @@ export function agentRoutes(db: Db) {
     };
   }
 
+  function isTruthyQueryFlag(value: unknown): boolean {
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+    }
+    return false;
+  }
+
   function canCreateAgents(agent: { role: string; permissions: Record<string, unknown> | null | undefined }) {
     if (!agent.permissions || typeof agent.permissions !== "object") return false;
     return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
@@ -2327,7 +2335,9 @@ export function agentRoutes(db: Db) {
       slotEnv?: string | null;
     }> = liveRuns.map((run) => ({ ...run, issueId: issue.id }));
 
-    if (responseRuns.length === 0) {
+    const includeSynthetic = isTruthyQueryFlag(req.query.includeSynthetic);
+
+    if (includeSynthetic && responseRuns.length === 0) {
       const executionDocument = await documentsSvc.getIssueDocumentByKey(issue.id, "atlas-execution");
       const parsedExecution = parseAtlasExecutionSummary(executionDocument?.body);
       const executionState = parsedExecution.executionState?.toLowerCase() ?? null;

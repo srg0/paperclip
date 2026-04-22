@@ -116,7 +116,7 @@ describe("agent live-runs routes", () => {
     });
   });
 
-  it("returns a synthetic atlas live-run when atlas-execution is running without heartbeat runs", async () => {
+  it("does not return a synthetic atlas live-run by default when atlas-execution is running without heartbeat runs", async () => {
     mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
       key: "atlas-execution",
       updatedAt: new Date("2026-04-15T12:23:39.000Z"),
@@ -133,6 +133,27 @@ describe("agent live-runs routes", () => {
     const res = await request(createApp()).get("/api/issues/HOM-574/live-runs");
 
     expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+    expect(mockDocumentService.getIssueDocumentByKey).not.toHaveBeenCalled();
+  });
+
+  it("returns a synthetic atlas live-run only when explicit debug access is requested", async () => {
+    mockDocumentService.getIssueDocumentByKey.mockResolvedValue({
+      key: "atlas-execution",
+      updatedAt: new Date("2026-04-15T12:23:39.000Z"),
+      body: [
+        "# Итог выполнения Atlas",
+        "",
+        "- Turn: `TURN 4`",
+        "- Atlas task: `paperclip-issue-1-t4-123`",
+        "- Execution state: `running`",
+        "- Slot env: `ai01`",
+      ].join("\n"),
+    });
+
+    const res = await request(createApp()).get("/api/issues/HOM-574/live-runs?includeSynthetic=1");
+
+    expect(res.status).toBe(200);
     expect(res.body).toEqual([
       expect.objectContaining({
         id: "paperclip-issue-1-t4-123",
@@ -147,5 +168,6 @@ describe("agent live-runs routes", () => {
         issueId: "issue-1",
       }),
     ]);
+    expect(mockDocumentService.getIssueDocumentByKey).toHaveBeenCalledWith("issue-1", "atlas-execution");
   });
 });

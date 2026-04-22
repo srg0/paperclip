@@ -8,12 +8,14 @@ import type { LiveRunForIssue } from "../api/heartbeats";
 function makeContext(input: {
   projectionWarning?: string | null;
   pendingUserRequests?: string[];
+  pendingConversation?: IssueExecutionCommentContext["pendingConversation"];
   turns: IssueExecutionCommentContext["turns"];
 }): IssueExecutionCommentContext {
   return {
     turns: input.turns,
     latestExecutedTurn: input.turns[input.turns.length - 1] ?? null,
     pendingUserRequests: input.pendingUserRequests ?? [],
+    pendingConversation: input.pendingConversation ?? [],
     projectionWarning: input.projectionWarning ?? null,
   };
 }
@@ -38,6 +40,22 @@ const runningContext = makeContext({
     },
   ],
   pendingUserRequests: ["И добавь slash-команды /mr и /cancel прямо в composer."],
+  pendingConversation: [
+    {
+      id: "running-user-1",
+      speaker: "user",
+      body: "И добавь slash-команды /mr и /cancel прямо в composer.",
+      createdAt: "2026-04-19T08:20:00.000Z",
+      tone: "info",
+    },
+    {
+      id: "running-assistant-1",
+      speaker: "assistant",
+      body: "Принял follow-up. Это Atlas Executor.",
+      createdAt: "2026-04-19T08:20:03.000Z",
+      tone: "working",
+    },
+  ],
   projectionWarning: "После последнего Atlas turn появились новые user comments (1), но новый execution ещё не начался.",
 });
 

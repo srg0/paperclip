@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agentApiKeys, companyMemberships, instanceUserRoles } from "@paperclipai/db";
+import { agentApiKeys, boardApiKeys, companyMemberships, instanceUserRoles } from "@paperclipai/db";
 import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
@@ -153,6 +153,48 @@ async function authorizeUpgrade(
   }
 
   const tokenHash = hashToken(token);
+  const now = new Date();
+  const boardKey = await db
+    .select()
+    .from(boardApiKeys)
+    .where(and(eq(boardApiKeys.keyHash, tokenHash), isNull(boardApiKeys.revokedAt)))
+    .then((rows) => rows.find((row) => !row.expiresAt || row.expiresAt.getTime() > now.getTime()) ?? null);
+
+  if (boardKey) {
+    const [roleRow, memberships] = await Promise.all([
+      db
+        .select({ id: instanceUserRoles.id })
+        .from(instanceUserRoles)
+        .where(and(eq(instanceUserRoles.userId, boardKey.userId), eq(instanceUserRoles.role, "instance_admin")))
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({ companyId: companyMemberships.companyId })
+        .from(companyMemberships)
+        .where(
+          and(
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, boardKey.userId),
+            eq(companyMemberships.status, "active"),
+          ),
+        ),
+    ]);
+    const hasCompanyMembership = memberships.some((row) => row.companyId === companyId);
+    if (!roleRow && !hasCompanyMembership) {
+      return null;
+    }
+
+    await db
+      .update(boardApiKeys)
+      .set({ lastUsedAt: now })
+      .where(eq(boardApiKeys.id, boardKey.id));
+
+    return {
+      companyId,
+      actorType: "board",
+      actorId: boardKey.userId,
+    };
+  }
+
   const key = await db
     .select()
     .from(agentApiKeys)

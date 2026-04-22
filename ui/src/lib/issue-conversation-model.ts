@@ -1,7 +1,11 @@
 import type { TranscriptEntry } from "../adapters";
 import type { LiveRunForIssue } from "../api/heartbeats";
 import { normalizeTranscript } from "../components/transcript/RunTranscriptView";
-import type { IssueExecutionCommentContext, IssueExecutionTurn } from "./issue-execution-turns";
+import type {
+  IssueExecutionCommentContext,
+  IssueExecutionTurn,
+  IssueNarrativeChatMessage,
+} from "./issue-execution-turns";
 
 export type IssueConversationVerbosity = "auto" | "brief" | "debug";
 export type IssueConversationEffectiveVerbosity = "brief" | "standard" | "debug";
@@ -325,31 +329,41 @@ function selectPrimaryLiveRun(liveRuns: LiveRunForIssue[]): PrimaryLiveRunMeta |
 
 function buildPendingTurnCards(
   pendingUserRequests: string[],
+  pendingConversation: IssueNarrativeChatMessage[],
   primaryLiveRun: PrimaryLiveRunMeta | null,
   lastSequence: number,
 ): IssueConversationTurnCard[] {
-  if (pendingUserRequests.length === 0) return [];
+  if (pendingUserRequests.length === 0 && pendingConversation.length === 0) return [];
 
-  const latestRequest = cleanMarkdownText(pendingUserRequests[pendingUserRequests.length - 1] ?? "");
-  const hiddenCount = Math.max(0, pendingUserRequests.length - 1);
-  const hiddenMessages = pendingUserRequests
-    .slice(0, -1)
-    .map((message) => cleanMarkdownText(message))
-    .filter(Boolean);
+  const latestUserMessage = [...pendingConversation]
+    .reverse()
+    .find((message) => message.speaker === "user" && cleanMarkdownText(message.body));
+  const latestAssistantMessage = [...pendingConversation]
+    .reverse()
+    .find((message) => {
+      if (message.speaker !== "assistant") return false;
+      if (!cleanMarkdownText(message.body)) return false;
+      if (!latestUserMessage) return true;
+      return new Date(message.createdAt).getTime() >= new Date(latestUserMessage.createdAt).getTime();
+    });
+
+  const latestRequest = cleanMarkdownText(
+    latestUserMessage?.body ?? pendingUserRequests[pendingUserRequests.length - 1] ?? "",
+  );
   const status: IssueConversationTurnCard["status"] = primaryLiveRun?.status === "running"
     ? "running"
     : primaryLiveRun?.status === "queued"
       ? "queued"
       : "waiting";
-  const liveSummaryParts = [
+  const liveSummary = [
     status === "running" ? "Running" : status === "queued" ? "Starting" : "No live run yet",
     primaryLiveRun?.turnLabel ?? null,
     primaryLiveRun?.agentName ?? null,
     primaryLiveRun?.slotEnv ? `slot ${primaryLiveRun.slotEnv}` : null,
-  ].filter(Boolean);
-  if (hiddenCount > 0) {
-    liveSummaryParts.push(`${hiddenCount} earlier messages folded`);
-  }
+  ]
+    .filter(Boolean);
+  const assistantAck = cleanMarkdownText(latestAssistantMessage?.body ?? "");
+  const summaryParts = assistantAck ? [assistantAck] : [...liveSummary];
 
   return [{
     id: "pending-turn-current",
@@ -358,34 +372,22 @@ function buildPendingTurnCards(
     request: latestRequest || "Waiting for the newest follow-up request.",
     status,
     statusLabel: statusLabel(status),
-    tone: status === "running" ? "working" : status === "queued" ? "neutral" : "warning",
-    summary: liveSummaryParts.join(" · ") || "Starting",
+    tone: status === "running" || assistantAck ? "working" : status === "queued" ? "neutral" : "warning",
+    summary: summaryParts.join(" · ") || "Waiting",
     proofSummary: null,
-    nextAction: hiddenCount > 0
-      ? `${hiddenCount} earlier follow-up message${hiddenCount === 1 ? "" : "s"} are folded under the current live launch.`
-      : status === "waiting"
-        ? "The latest follow-up is recorded, but there is still no live launch for it."
-      : null,
+    nextAction: null,
     proofState: "none",
     artifacts: [],
-    phaseBundles: [
-      {
-        id: "pending-run-current",
-        label: status === "running" ? "Running" : status === "queued" ? "Starting" : "Waiting",
-        status: status === "running" ? "running" : status === "queued" ? "pending" : "failed",
-        summary: primaryLiveRun?.turnLabel ?? primaryLiveRun?.agentName ?? "No live run yet",
-      },
-      ...(hiddenCount > 0
-        ? [{
-            id: "pending-run-folded-messages",
-            label: "Messages",
-            status: "pending" as const,
-            summary: `${hiddenCount} earlier follow-up message${hiddenCount === 1 ? "" : "s"} folded`,
-            itemCount: hiddenCount,
-            items: hiddenMessages,
-          }]
-        : []),
-    ],
+    phaseBundles: assistantAck || primaryLiveRun
+      ? [{
+          id: "pending-run-current",
+          label: status === "running" ? "Running" : status === "queued" ? "Starting" : "Thinking",
+          status: status === "running" ? "running" : status === "queued" ? "pending" : "running",
+          summary: assistantAck || liveSummary.join(" · ") || "Waiting",
+          itemCount: assistantAck ? 1 : undefined,
+          items: assistantAck ? [assistantAck] : undefined,
+        }]
+      : [],
     updatedAt: null,
   }];
 }
@@ -528,27 +530,17 @@ export function buildIssueConversationModel(input: {
       hasActiveLiveRun,
     }),
   );
-  turns.push(...buildPendingTurnCards(context.pendingUserRequests, primaryLiveRun, context.turns.length));
-
-  const liveStrip = summarizeLiveRuns(input.liveRuns, input.transcriptByRun);
-  const attention = context.projectionWarning && context.pendingUserRequests.length === 0
-    ? {
-        title: "Conversation state is ahead of the projection",
-        body: context.projectionWarning,
-        tone: "warning" as const,
-      }
-    : liveStrip?.tone === "danger"
-      ? {
-          title: "Live execution is noisy enough to matter",
-          body: "The main flow stays collapsed, but the current live run is emitting errors. Open Task Dashboard if you need the raw transcript.",
-          tone: "danger" as const,
-        }
-      : null;
+  turns.push(...buildPendingTurnCards(
+    context.pendingUserRequests,
+    context.pendingConversation,
+    primaryLiveRun,
+    context.turns.length,
+  ));
 
   return {
     effectiveVerbosity,
     turns,
-    liveStrip,
-    attention,
+    liveStrip: null,
+    attention: null,
   };
 }

@@ -182,6 +182,36 @@ Atlas принял turn и поднимает workspace для этой зада
     ]);
     expect(context.projectionWarning).toContain("новые user comments");
   });
+
+  it("captures durable assistant replies after the latest executed turn as pending conversation", () => {
+    const context = buildIssueExecutionCommentContext({
+      issue: makeIssue({
+        identifier: "HOM-957",
+        title: "Добавляем HyperFrames в управление контентом",
+        description: "Сделай HyperFrames рабочим в create social post.",
+      }),
+      projectedTurnNumber: 1,
+      comments: [
+        makeComment(`<!-- paperclip-display-author: Atlas Bridge · Reporter -->
+### Reporter
+
+**Итог готов для проверки человеком**
+
+**Коротко:** TURN 1 закрыт.`, "2026-04-20T16:26:49.827Z"),
+        makeComment("[pw] ответь коротким ack и начни follow-up", "2026-04-20T16:31:44.544Z", true),
+        makeComment("Принял follow-up. Это Atlas Executor.", "2026-04-20T16:31:49.544Z"),
+      ],
+    });
+
+    expect(context.pendingUserRequests).toEqual(["[pw] ответь коротким ack и начни follow-up"]);
+    expect(context.pendingConversation.map((message) => ({
+      speaker: message.speaker,
+      body: message.body,
+    }))).toEqual([
+      { speaker: "user", body: "[pw] ответь коротким ack и начни follow-up" },
+      { speaker: "assistant", body: "Принял follow-up. Это Atlas Executor." },
+    ]);
+  });
 });
 
 describe("buildIssueNarrativeChatMessages", () => {

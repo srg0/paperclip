@@ -4,6 +4,7 @@ import type { Agent, Issue, LiveEvent } from "@paperclipai/shared";
 import type { RunForIssue } from "../api/activity";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import { authApi } from "../api/auth";
+import { readBrowserBoardApiToken } from "../api/client";
 import { useCompany } from "./CompanyContext";
 import type { ToastInput } from "./ToastContext";
 import { useToast } from "./ToastContext";
@@ -735,7 +736,9 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     retry: false,
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-  const socketAuthKey = session?.session?.id ?? currentUserId ?? "signed_out";
+  const browserBoardApiToken = readBrowserBoardApiToken();
+  const socketBoardApiToken = browserBoardApiToken;
+  const socketAuthKey = session?.session?.id ?? currentUserId ?? socketBoardApiToken ?? "signed_out";
   const liveCompanyId = resolveLiveCompanyId(selectedCompanyId, selectedCompany?.id ?? null);
   const canConnectSocket = sessionStatus === "success" && session !== null && liveCompanyId !== null;
   const currentActorRef = useRef<{ userId: string | null; agentId: string | null }>({
@@ -804,8 +807,13 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     const connect = () => {
       if (closed) return;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/api/companies/${encodeURIComponent(liveCompanyId)}/events/ws`;
-      const nextSocket = new WebSocket(url);
+      const socketUrl = new URL(
+        `${protocol}://${window.location.host}/api/companies/${encodeURIComponent(liveCompanyId)}/events/ws`,
+      );
+      if (socketBoardApiToken) {
+        socketUrl.searchParams.set("token", socketBoardApiToken);
+      }
+      const nextSocket = new WebSocket(socketUrl.toString());
       socket = nextSocket;
 
       nextSocket.onopen = () => {
@@ -861,7 +869,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       socket = null;
       closeSocketQuietly(activeSocket, "provider_unmount");
     };
-  }, [queryClient, liveCompanyId, pushToast, canConnectSocket, socketAuthKey]);
+  }, [queryClient, liveCompanyId, pushToast, canConnectSocket, socketAuthKey, socketBoardApiToken]);
 
   return (
     <LiveUpdatesContext.Provider value={contextValue}>

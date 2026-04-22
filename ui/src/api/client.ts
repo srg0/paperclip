@@ -1,5 +1,24 @@
 const BASE = "/api";
 
+export const BROWSER_BOARD_API_TOKEN_STORAGE_KEY = "paperclip.live.boardApiToken";
+export const BROWSER_BOARD_API_TOKEN_MODE_STORAGE_KEY = "paperclip.live.useBoardToken";
+
+function readBrowserStorage(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function readBrowserBoardApiToken(): string | null {
+  const enabled = readBrowserStorage(BROWSER_BOARD_API_TOKEN_MODE_STORAGE_KEY);
+  if (enabled !== "1") return null;
+  const token = readBrowserStorage(BROWSER_BOARD_API_TOKEN_STORAGE_KEY)?.trim();
+  return token ? token : null;
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -17,6 +36,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const body = init?.body;
   if (!(body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
+  }
+  const browserBoardApiToken = readBrowserBoardApiToken();
+  if (browserBoardApiToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${browserBoardApiToken}`);
   }
 
   const res = await fetch(`${BASE}${path}`, {

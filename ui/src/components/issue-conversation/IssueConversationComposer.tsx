@@ -40,6 +40,9 @@ interface IssueConversationComposerProps {
   agentMap?: Map<string, Agent>;
   draftKey?: string;
   issueStatus?: string | null;
+  simpleMode?: boolean;
+  fixedCommentTargetAgentId?: string | null;
+  primaryAgentLabel?: string;
 }
 
 interface SlashCommandDefinition {
@@ -160,6 +163,9 @@ export function IssueConversationComposer({
   agentMap,
   draftKey,
   issueStatus,
+  simpleMode = false,
+  fixedCommentTargetAgentId = null,
+  primaryAgentLabel = "Atlas Executor",
 }: IssueConversationComposerProps) {
   const [body, setBody] = useState(() => readComposerDraft(draftKey));
   const [submitting, setSubmitting] = useState(false);
@@ -189,7 +195,7 @@ export function IssueConversationComposer({
     }
   }, [body, draftKey]);
 
-  const slashQuery = resolveSlashQuery(body);
+  const slashQuery = simpleMode ? null : resolveSlashQuery(body);
   const slashOptions = slashQuery === null
     ? []
     : [...TASK_SLASH_COMMANDS, ...((imageUploadHandler || onAttachImage || mentions.length > 0 || enableReassign) ? COMPOSER_SLASH_COMMANDS : [])]
@@ -211,8 +217,8 @@ export function IssueConversationComposer({
   async function submitSlashCommand(commandId: SlashCommandId) {
     const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
     const reassignment = hasReassignment ? parseReassignment(reassignTarget) : null;
-    const directedAgentTargetId =
-      enableReassign && reassignTarget.startsWith("agent:") ? reassignTarget.slice("agent:".length) : null;
+    const directedAgentTargetId = fixedCommentTargetAgentId
+      ?? (enableReassign && reassignTarget.startsWith("agent:") ? reassignTarget.slice("agent:".length) : null);
 
     setSubmitting(true);
     try {
@@ -245,27 +251,27 @@ export function IssueConversationComposer({
   async function handleSubmit() {
     const trimmed = body.trim();
     if (!trimmed) return;
-    if (trimmed === "/mr") {
+    if (!simpleMode && trimmed === "/mr") {
       await submitSlashCommand("mr");
       return;
     }
-    if (trimmed === "/cancel") {
+    if (!simpleMode && trimmed === "/cancel") {
       await submitSlashCommand("cancel");
       return;
     }
-    if (trimmed === "/mention") {
+    if (!simpleMode && trimmed === "/mention") {
       await applyComposerCommand("mention");
       return;
     }
-    if (trimmed === "/attach") {
+    if (!simpleMode && trimmed === "/attach") {
       await applyComposerCommand("attach");
       return;
     }
 
     const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
     const reassignment = hasReassignment ? parseReassignment(reassignTarget) : null;
-    const directedAgentTargetId =
-      enableReassign && reassignTarget.startsWith("agent:") ? reassignTarget.slice("agent:".length) : null;
+    const directedAgentTargetId = fixedCommentTargetAgentId
+      ?? (enableReassign && reassignTarget.startsWith("agent:") ? reassignTarget.slice("agent:".length) : null);
 
     setSubmitting(true);
     try {
@@ -313,34 +319,23 @@ export function IssueConversationComposer({
       : null;
 
   return (
-    <section className="codex-issue-surface rounded-2xl border border-border/70 bg-background/90 p-3.5 shadow-[var(--codex-surface-shadow)]">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
-            Continue Task
-          </div>
-          <div className="mt-1 text-[13px] text-muted-foreground">
-            Send the next turn without dropping back into raw issue comments.
-          </div>
-        </div>
-        {shouldAutoReopen ? (
-          <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-3 py-1 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
-            Auto-reopen enabled
-          </span>
-        ) : null}
-      </div>
-
+    <section
+      className="codex-issue-surface rounded-2xl border border-border/70 bg-background/90 p-3.5 shadow-[var(--codex-surface-shadow)]"
+      data-testid="issue-conversation-composer"
+    >
       <div className="space-y-3">
-        <MarkdownEditor
-          ref={editorRef}
-          value={body}
-          onChange={setBody}
-          placeholder="Tell the task what should happen next... Use / for commands."
-          mentions={mentions}
-          onSubmit={handleSubmit}
-          imageUploadHandler={imageUploadHandler}
-          contentClassName="min-h-[140px] text-[15px] leading-7"
-        />
+        <div data-testid="issue-conversation-editor">
+          <MarkdownEditor
+            ref={editorRef}
+            value={body}
+            onChange={setBody}
+            placeholder={simpleMode ? `Tell ${primaryAgentLabel} what should happen next...` : "Tell the task what should happen next... Use / for commands."}
+            mentions={mentions}
+            onSubmit={handleSubmit}
+            imageUploadHandler={imageUploadHandler}
+            contentClassName="min-h-[140px] text-[15px] leading-7"
+          />
+        </div>
 
         {slashQuery !== null ? (
           <div className="overflow-hidden rounded-2xl border border-border/70 bg-background/95 shadow-[var(--codex-surface-shadow)] animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -384,12 +379,6 @@ export function IssueConversationComposer({
 
         {composerStatusSlot}
 
-        {directedAgentOption ? (
-          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] px-3 py-2 text-[11px] text-cyan-900 dark:text-cyan-100">
-            This turn will be routed directly to <span className="font-medium">{directedAgentOption.label}</span> using the full task context.
-          </div>
-        ) : null}
-
         <div className="flex flex-wrap items-center gap-3">
           {(imageUploadHandler || onAttachImage) && (
             <div className="mr-auto flex items-center gap-3">
@@ -412,72 +401,95 @@ export function IssueConversationComposer({
             </div>
           )}
 
-          {enableReassign && reassignOptions.length > 0 && (
-            <InlineEntitySelector
-              value={reassignTarget}
-              options={reassignOptions}
-              placeholder="Assignee"
-              noneLabel="No assignee"
-              searchPlaceholder="Search assignees..."
-              emptyMessage="No assignees found."
-              onChange={setReassignTarget}
-              className="text-xs h-8"
-              renderTriggerValue={(option) => {
-                if (!option) return <span className="text-muted-foreground">Assignee</span>;
-                const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
-                const agent = agentId ? agentMap?.get(agentId) : null;
-                return (
-                  <>
-                    {agent ? (
-                      <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : null}
-                    <span className="truncate">{option.label}</span>
-                  </>
-                );
-              }}
-              renderOption={(option) => {
-                if (!option.id) return <span className="truncate">{option.label}</span>;
-                const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
-                const agent = agentId ? agentMap?.get(agentId) : null;
-                return (
-                  <>
-                    {agent ? (
-                      <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : null}
-                    <span className="truncate">{option.label}</span>
-                  </>
-                );
-              }}
-            />
+          {simpleMode ? (
+            <span
+              data-testid="issue-primary-agent-chip"
+              className="inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/[0.05] px-3 py-1 text-xs font-medium text-cyan-900 dark:text-cyan-100"
+            >
+              {primaryAgentLabel}
+            </span>
+          ) : null}
+
+          {!simpleMode && enableReassign && reassignOptions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <InlineEntitySelector
+                value={reassignTarget}
+                options={reassignOptions}
+                placeholder="Agent"
+                noneLabel="No assignee"
+                searchPlaceholder="Search assignees..."
+                emptyMessage="No assignees found."
+                onChange={setReassignTarget}
+                className="text-xs h-8"
+                renderTriggerValue={(option) => {
+                  if (!option) return <span className="text-muted-foreground">Agent</span>;
+                  const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
+                  const agent = agentId ? agentMap?.get(agentId) : null;
+                  return (
+                    <>
+                      {agent ? (
+                        <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      ) : null}
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+                renderOption={(option) => {
+                  if (!option.id) return <span className="truncate">{option.label}</span>;
+                  const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
+                  const agent = agentId ? agentMap?.get(agentId) : null;
+                  return (
+                    <>
+                      {agent ? (
+                        <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      ) : null}
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+              />
+              {directedAgentOption ? (
+                <span
+                  data-testid="issue-directed-routing-chip"
+                  className="rounded-full border border-cyan-500/20 bg-cyan-500/[0.04] px-2.5 py-1 text-[11px] text-cyan-900 dark:text-cyan-100"
+                >
+                  {directedAgentOption.label}
+                </span>
+              ) : null}
+            </div>
           )}
 
-          <Select value={selectedModel} onValueChange={setSelectedModel}>
-            <SelectTrigger className="h-8 min-w-[150px] text-xs">
-              <SelectValue placeholder="Model" />
-            </SelectTrigger>
-            <SelectContent>
-              {COMMENT_MODEL_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {!simpleMode ? (
+            <>
+              <Select value={selectedModel} onValueChange={setSelectedModel}>
+                <SelectTrigger className="h-8 min-w-[150px] text-xs">
+                  <SelectValue placeholder="Model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMMENT_MODEL_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-          <Select value={selectedReasoning} onValueChange={setSelectedReasoning}>
-            <SelectTrigger className="h-8 min-w-[160px] text-xs">
-              <SelectValue placeholder="Reasoning" />
-            </SelectTrigger>
-            <SelectContent>
-              {COMMENT_REASONING_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              <Select value={selectedReasoning} onValueChange={setSelectedReasoning}>
+                <SelectTrigger className="h-8 min-w-[160px] text-xs">
+                  <SelectValue placeholder="Reasoning" />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMMENT_REASONING_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          ) : null}
 
-          <Button size="xs" disabled={!canSubmit} onClick={() => void handleSubmit()}>
+          <Button data-testid="issue-send-turn" size="xs" disabled={!canSubmit} onClick={() => void handleSubmit()}>
             {submitting ? "Sending..." : "Send Turn"}
           </Button>
         </div>

@@ -48,5 +48,9 @@ tests/e2e/test-results/
 tests/e2e/playwright-report/
 tests/release-smoke/test-results/
 tests/release-smoke/playwright-report/
+tests/live/.env.local
+tests/live/test-results/
+tests/live/playwright-report/
+output/playwright-live/
 .superset/
 .claude/worktrees/

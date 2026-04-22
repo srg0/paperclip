@@ -33,27 +33,23 @@ import { IssueExecutionHeader } from "../components/IssueExecutionHeader";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
-import { IssueLiveSessionPanel } from "../components/IssueLiveSessionPanel";
 import { IssueConversationComposer } from "../components/issue-conversation/IssueConversationComposer";
 import { IssueConversationSurface } from "../components/issue-conversation/IssueConversationSurface";
 import {
   buildIssueExecutionHeaderModel,
   buildPendingAtlasFollowupStatus,
   parseExecutionDocument,
-  shouldUsePendingAtlasLiveSignal,
 } from "../lib/issue-execution-flow";
-import { useIssueChatLiveTransport } from "../hooks/useIssueChatLiveTransport";
 import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "../lib/issue-execution-turns";
-import type { IssueConversationVerbosity } from "../lib/issue-conversation-model";
 import { filterIssueTimelineRuns } from "../lib/issue-run-history";
+import { useIssueChatLiveTransport } from "../hooks/useIssueChatLiveTransport";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import { Identity } from "../components/Identity";
-import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import { PluginLauncherOutlet } from "@/plugins/launchers";
+import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
@@ -68,10 +64,8 @@ import {
   Copy,
   EyeOff,
   Hexagon,
-  ListTree,
   MessageSquare,
   MoreHorizontal,
-  PanelsTopLeft,
   Paperclip,
   Repeat,
   SlidersHorizontal,
@@ -323,10 +317,8 @@ export function IssueDetail() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
-  const [surfaceTab, setSurfaceTab] = useState("chat");
-  const [dashboardTab, setDashboardTab] = useState("overview");
+  const [opsPanelsOpen, setOpsPanelsOpen] = useState(false);
   const [historyTab, setHistoryTab] = useState("runs");
-  const [conversationVerbosity, setConversationVerbosity] = useState<IssueConversationVerbosity>("auto");
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
@@ -413,23 +405,6 @@ export function IssueDetail() {
       projectedTurnNumber: parsedExecutionDocument.turnNumber,
     });
   }, [comments, issue, parsedExecutionDocument.turnNumber]);
-  const atlasExecutionPanelModel = useMemo(() => {
-    return {
-      ...parsedExecutionDocument,
-      latestRequest: executionCommentContext?.latestExecutedTurn?.request ?? null,
-      pendingRequests: executionCommentContext?.pendingUserRequests ?? [],
-      turnHistory: executionCommentContext?.turns.map((turn) => ({
-        sequence: turn.sequence,
-        request: turn.request,
-        status: turn.status,
-        verifierScope: turn.verifierScope,
-        outcome: turn.outcome,
-        startedAt: turn.startedAt,
-        settledAt: turn.settledAt,
-      })) ?? [],
-      projectionWarning: executionCommentContext?.projectionWarning ?? null,
-    };
-  }, [executionCommentContext, parsedExecutionDocument]);
   const atlasNarrativeChatMessages = useMemo(() => {
     if (!issue) return [];
     return buildIssueNarrativeChatMessages({
@@ -440,6 +415,7 @@ export function IssueDetail() {
   }, [comments, executionCommentContext, issue]);
   const latestLiveRun = useMemo(
     () => [...(liveRuns ?? [])]
+      .filter((run) => !isSyntheticAtlasRun(run))
       .filter((run) => run.status === "running" || run.status === "queued")
       .sort((a, b) => {
         const aTime = new Date(a.startedAt ?? a.createdAt).getTime();
@@ -455,13 +431,17 @@ export function IssueDetail() {
     () => (
       activeRun?.status === "running"
         ? activeRun
-        : (liveRuns ?? []).find((run) => run.status === "running") ?? null
+        : (liveRuns ?? []).find((run) => run.status === "running" && !isSyntheticAtlasRun(run)) ?? null
     ),
     [activeRun, liveRuns],
   );
   const sourceBreadcrumb = useMemo(
     () => readIssueDetailBreadcrumb(location.state, location.search) ?? { label: "Issues", href: "/issues" },
     [location.state, location.search],
+  );
+  const forceOpsPanels = useMemo(
+    () => new URLSearchParams(location.search).get("ops") === "1",
+    [location.search],
   );
 
   const { data: allIssues } = useQuery({
@@ -475,6 +455,36 @@ export function IssueDetail() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const { signal: issueChatLiveSignal, feed: issueChatLiveFeed } = useIssueChatLiveTransport({
+    companyId: resolvedCompanyId,
+    issue: issue ? { id: issue.id, identifier: issue.identifier ?? null } : null,
+    agents: agents ?? null,
+  });
+  const pendingFollowupStatus = useMemo(() => {
+    if (issueChatLiveSignal) {
+      return {
+        state: issueChatLiveSignal.state,
+        title: issueChatLiveSignal.title,
+        summary: issueChatLiveSignal.summary,
+        detail: issueChatLiveSignal.detail,
+        turnLabel: issueChatLiveSignal.turnLabel,
+      };
+    }
+    if (!pendingAtlasFollowup) return null;
+    return buildPendingAtlasFollowupStatus({
+      pendingSince: pendingAtlasFollowup.submittedAt,
+      baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
+      parsed: parsedExecutionDocument,
+      dispatch: {
+        status: pendingAtlasFollowup.dispatchStatus,
+        requestType: pendingAtlasFollowup.requestType,
+        detail: pendingAtlasFollowup.detail,
+        turnNumber: pendingAtlasFollowup.turnNumber,
+        turnLabel: pendingAtlasFollowup.turnLabel,
+      },
+      live: null,
+    });
+  }, [issueChatLiveSignal, parsedExecutionDocument, pendingAtlasFollowup]);
 
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -498,21 +508,17 @@ export function IssueDetail() {
     companyId: resolvedCompanyId,
     enabled: !!resolvedCompanyId,
   });
-  const issuePluginTabItems = useMemo(
-    () => issuePluginDetailSlots.map((slot) => ({
-      value: `plugin:${slot.pluginKey}:${slot.id}`,
-      label: slot.displayName,
-      slot,
-    })),
-    [issuePluginDetailSlots],
-  );
-  const activePluginTab = issuePluginTabItems.find((item) => item.value === dashboardTab) ?? null;
 
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
+  const atlasPrimaryAgent = useMemo(() => {
+    const issueAssignee = issue?.assigneeAgentId ? agentMap.get(issue.assigneeAgentId) ?? null : null;
+    if (issueAssignee?.name === "Atlas Executor") return issueAssignee;
+    return [...agentMap.values()].find((agent) => agent.name === "Atlas Executor") ?? issueAssignee ?? null;
+  }, [agentMap, issue?.assigneeAgentId]);
 
   // Filter out runs already shown by the live widget to avoid duplication
   const timelineRuns = useMemo(() => {
@@ -550,6 +556,10 @@ export function IssueDetail() {
     }
     return options;
   }, [agents, orderedProjects]);
+
+  useEffect(() => {
+    if (forceOpsPanels) setOpsPanelsOpen(true);
+  }, [forceOpsPanels]);
 
   const childIssues = useMemo(() => {
     if (!allIssues || !issue) return [];
@@ -728,94 +738,6 @@ export function IssueDetail() {
       mismatchText: executionCommentContext?.projectionWarning && !latestLiveRun ? executionCommentContext.projectionWarning : baseModel.mismatchText,
     };
   }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents, executionCommentContext, latestLiveRun]);
-  const issueChatLiveTransport = useIssueChatLiveTransport({
-    companyId: issue?.companyId ?? null,
-    issue: issue ? { id: issue.id, identifier: issue.identifier } : null,
-    agents: agents ?? null,
-  });
-  const trustedLiveComposerSignal = useMemo(() => {
-    if (!shouldUsePendingAtlasLiveSignal({
-      signal: issueChatLiveTransport.signal,
-      hasLiveRun: Boolean(latestLiveRun),
-      hasPendingFollowup: Boolean(pendingAtlasFollowup),
-    })) {
-      return null;
-    }
-    return issueChatLiveTransport.signal;
-  }, [issueChatLiveTransport.signal, latestLiveRun, pendingAtlasFollowup]);
-  const effectivePendingComposerStatus = useMemo(() => {
-    if (pendingAtlasFollowup) {
-      return buildPendingAtlasFollowupStatus({
-        pendingSince: pendingAtlasFollowup.submittedAt,
-        baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
-        parsed: parsedExecutionDocument,
-        dispatch: {
-          status: pendingAtlasFollowup.dispatchStatus,
-          requestType: pendingAtlasFollowup.requestType,
-          detail: pendingAtlasFollowup.detail,
-          turnNumber: pendingAtlasFollowup.turnNumber,
-          turnLabel: pendingAtlasFollowup.turnLabel,
-        },
-        live: trustedLiveComposerSignal
-          ? {
-            state: trustedLiveComposerSignal.state,
-            title: trustedLiveComposerSignal.title,
-            summary: trustedLiveComposerSignal.summary,
-            detail: trustedLiveComposerSignal.detail,
-            turnLabel: trustedLiveComposerSignal.turnLabel,
-          }
-          : null,
-      });
-    }
-
-    if (trustedLiveComposerSignal) {
-      return {
-        state: trustedLiveComposerSignal.state,
-        title: trustedLiveComposerSignal.title,
-        summary: trustedLiveComposerSignal.summary,
-        detail: trustedLiveComposerSignal.detail,
-        turnLabel: trustedLiveComposerSignal.turnLabel,
-      };
-    }
-
-    if (latestLiveRun) {
-      const triggerDetail = latestLiveRun.triggerDetail?.trim() || null;
-      const slotDetail = latestLiveRun.slotEnv ? `slot ${latestLiveRun.slotEnv}` : null;
-      const liveState: "running" | "queued" = latestLiveRun.status === "running" ? "running" : "queued";
-      return {
-        state: liveState,
-        title: liveState === "running" ? "Running" : "Starting",
-        summary: [triggerDetail, latestLiveRun.agentName].filter(Boolean).join(" · ") || "Atlas Executor",
-        detail: slotDetail,
-        turnLabel: triggerDetail,
-      };
-    }
-
-    return null;
-  }, [trustedLiveComposerSignal, latestLiveRun, parsedExecutionDocument, pendingAtlasFollowup]);
-  const pendingComposerStatusCard = effectivePendingComposerStatus ? (
-    <div
-      className={cn(
-        "rounded-lg border px-3 py-2 text-xs",
-        effectivePendingComposerStatus.state === "failed" || effectivePendingComposerStatus.state === "blocked"
-          ? "border-red-500/30 bg-red-500/[0.06] text-red-900 dark:text-red-100"
-          : effectivePendingComposerStatus.state === "completed"
-            ? "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-900 dark:text-emerald-100"
-            : effectivePendingComposerStatus.state === "running"
-              || effectivePendingComposerStatus.state === "accepted"
-              || effectivePendingComposerStatus.state === "queued"
-              ? "border-cyan-500/30 bg-cyan-500/[0.06] text-cyan-900 dark:text-cyan-100"
-              : "border-amber-500/30 bg-amber-500/[0.06] text-amber-900 dark:text-amber-100"
-      )}
-    >
-      <div className="font-medium">{effectivePendingComposerStatus.title}</div>
-      <div className="mt-1 opacity-90">{effectivePendingComposerStatus.summary}</div>
-      {effectivePendingComposerStatus.detail ? (
-        <div className="mt-1 opacity-75">{effectivePendingComposerStatus.detail}</div>
-      ) : null}
-    </div>
-  ) : null;
-
   const invalidateIssue = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!) });
@@ -944,37 +866,6 @@ export function IssueDetail() {
         });
       } else if (atlasFollowup?.status === "accepted") {
         const submittedAt = new Date().toISOString();
-        if (atlasFollowup.requestType === "followup") {
-          const atlasExecutorAgent = (agents ?? []).find((agent) => {
-            const candidate = `${agent.urlKey ?? ""} ${agent.name ?? ""} ${agent.role ?? ""}`.toLowerCase();
-            return candidate.includes("atlas-executor") || candidate.includes("atlas executor");
-          });
-          queryClient.setQueryData(
-            queryKeys.issues.liveRuns(issueId!),
-            (current: import("../api/heartbeats").LiveRunForIssue[] | undefined) => {
-              const next = (current ?? []).filter((run) => !isSyntheticAtlasRun(run));
-              next.unshift({
-                id: `atlas-followup:${response.comment?.id ?? submittedAt}`,
-                status: "queued",
-                invocationSource: "atlas_execution",
-                triggerDetail: parsedExecutionDocument.turnLabel
-                  ? `Follow-up after ${parsedExecutionDocument.turnLabel}`
-                  : "Atlas follow-up",
-                startedAt: submittedAt,
-                finishedAt: null,
-                createdAt: submittedAt,
-                agentId: atlasExecutorAgent?.id ?? issue?.assigneeAgentId ?? "atlas-executor",
-                agentName: atlasExecutorAgent?.name ?? "Atlas Executor",
-                adapterType: atlasExecutorAgent?.adapterType ?? "atlas_execution",
-                issueId: issueId!,
-                syntheticSource: "atlas_execution",
-                openable: false,
-              });
-              return next;
-            },
-          );
-          queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
-        }
         setPendingAtlasFollowup({
           submittedAt,
           baseTurnNumber: atlasFollowup?.turnNumber ?? parsedExecutionDocument.turnNumber,
@@ -1477,490 +1368,408 @@ export function IssueDetail() {
         />
       </div>
 
-      {executionHeaderModel ? (
-        <IssueExecutionHeader
-          model={executionHeaderModel}
-          issueKey={issue.identifier ?? issue.id.slice(0, 8)}
-          issueStatus={issue.status}
+      <div className="space-y-4" data-testid="issue-primary-flow">
+        <IssueConversationSurface
+          pendingFollowupStatus={pendingFollowupStatus}
+          liveFeed={issueChatLiveFeed}
+          chatMessages={atlasNarrativeChatMessages}
         />
-      ) : null}
 
-      <Tabs value={surfaceTab} onValueChange={setSurfaceTab} className="space-y-4">
-        <TabsList variant="line" className="w-full justify-start gap-1">
-          <TabsTrigger value="chat" className="gap-1.5">
-            <MessageSquare className="h-3.5 w-3.5" />
-            Chat
-          </TabsTrigger>
-          <TabsTrigger value="dashboard" className="gap-1.5">
-            <PanelsTopLeft className="h-3.5 w-3.5" />
-            Task Dashboard
-          </TabsTrigger>
-          <TabsTrigger value="history" className="gap-1.5">
-            <ActivityIcon className="h-3.5 w-3.5" />
-            History
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="chat" className="space-y-4">
-          <IssueConversationSurface
-            companyId={issue.companyId}
-            liveRuns={liveRuns ?? []}
-            context={executionCommentContext}
-            verbosity={conversationVerbosity}
-            onVerbosityChange={setConversationVerbosity}
-            pendingFollowupStatus={effectivePendingComposerStatus}
-            liveFeed={issueChatLiveTransport.feed}
-          />
-
-          <IssueConversationComposer
-            key={issue.id}
-            onAdd={async (body, reopen, reassignment, commentTargetAgentId, options) => {
-              if (reassignment) {
-                await addCommentAndReassign.mutateAsync({
-                  body,
-                  reopen,
-                  reassignment,
-                  commentTargetAgentId,
-                  ...(options?.interrupt ? { interrupt: true } : {}),
-                });
-                return;
-              }
-              await addComment.mutateAsync({
+        <IssueConversationComposer
+          key={issue.id}
+          onAdd={async (body, reopen, reassignment, commentTargetAgentId, options) => {
+            if (reassignment) {
+              await addCommentAndReassign.mutateAsync({
                 body,
                 reopen,
+                reassignment,
                 commentTargetAgentId,
                 ...(options?.interrupt ? { interrupt: true } : {}),
               });
-            }}
-            imageUploadHandler={async (file) => {
-              const attachment = await uploadAttachment.mutateAsync(file);
-              return attachment.contentPath;
-            }}
-            onAttachImage={async (file) => {
-              await uploadAttachment.mutateAsync(file);
-            }}
-            composerStatusSlot={pendingComposerStatusCard}
-            enableReassign
-            reassignOptions={commentReassignOptions}
-            currentAssigneeValue={actualAssigneeValue}
-            suggestedAssigneeValue={suggestedAssigneeValue}
-            mentions={mentionOptions}
-            agentMap={agentMap}
-            draftKey={`paperclip:issue-comment-draft:${issue.id}`}
-            issueStatus={issue.status}
-          />
-        </TabsContent>
+              return;
+            }
+            await addComment.mutateAsync({
+              body,
+              reopen,
+              commentTargetAgentId,
+              ...(options?.interrupt ? { interrupt: true } : {}),
+            });
+          }}
+          imageUploadHandler={async (file) => {
+            const attachment = await uploadAttachment.mutateAsync(file);
+            return attachment.contentPath;
+          }}
+          onAttachImage={async (file) => {
+            await uploadAttachment.mutateAsync(file);
+          }}
+          fixedCommentTargetAgentId={atlasPrimaryAgent?.id ?? issue.assigneeAgentId ?? null}
+          primaryAgentLabel={atlasPrimaryAgent?.name ?? "Atlas Executor"}
+          simpleMode
+          agentMap={agentMap}
+          draftKey={`paperclip:issue-comment-draft:${issue.id}`}
+          issueStatus={issue.status}
+        />
+      </div>
 
-        <TabsContent value="dashboard" className="space-y-4">
-          <div className="rounded-2xl border border-border bg-card/80 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-2">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Task Dashboard
-                </p>
-                <h3 className="text-lg font-semibold text-foreground">
-                  Один обзор по задаче без повторения чата и сырого execution noise.
-                </h3>
-                <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                  Здесь живут статус задачи, доказательства, документы и инфраструктурные панели. Полный диалог остается в Chat, а аудит событий уезжает в History.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <StatusBadge status={issue.status} />
-                {hasLiveRuns ? <StatusBadge status="running" /> : null}
-                {queuedComments.length > 0 ? (
-                  <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
-                    Queue {queuedComments.length}
-                  </span>
-                ) : null}
-                {linkedApprovals?.length ? (
-                  <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
-                    Approvals {linkedApprovals.length}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <Tabs value={dashboardTab} onValueChange={setDashboardTab} className="space-y-3">
-            <TabsList variant="line" className="w-full justify-start gap-1">
-              <TabsTrigger value="overview" className="gap-1.5">
-                <Hexagon className="h-3.5 w-3.5" />
-                Overview
-              </TabsTrigger>
-              <TabsTrigger value="subissues" className="gap-1.5">
-                <ListTree className="h-3.5 w-3.5" />
-                Sub-issues
-              </TabsTrigger>
-              {linkedApprovals && linkedApprovals.length > 0 ? (
-                <TabsTrigger value="approvals" className="gap-1.5">
-                  <Check className="h-3.5 w-3.5" />
-                  Approvals
-                </TabsTrigger>
+      <Sheet open={opsPanelsOpen} onOpenChange={setOpsPanelsOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-3xl lg:max-w-[1100px]" data-testid="issue-debug-panels-sheet">
+          <SheetHeader>
+            <SheetTitle className="text-sm">Debug panels</SheetTitle>
+          </SheetHeader>
+          <ScrollArea className="h-[calc(100vh-96px)] pr-4">
+            <div className="space-y-6 py-4">
+              {executionHeaderModel ? (
+                <IssueExecutionHeader
+                  model={executionHeaderModel}
+                  issueKey={issue.identifier ?? issue.id.slice(0, 8)}
+                  issueStatus={issue.status}
+                />
               ) : null}
-              {issuePluginTabItems.map((item) => (
-                <TabsTrigger key={item.value} value={item.value}>
-                  {item.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
 
-            <TabsContent value="overview" className="space-y-4">
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="space-y-4">
-                  <IssueLiveSessionPanel
-                    issueId={issueId!}
-                    companyId={issue.companyId}
-                    atlasExecutionFallback={atlasExecutionPanelModel}
-                    chatMessages={atlasNarrativeChatMessages}
-                  />
-
-                  <PluginSlotOutlet
-                    slotTypes={["toolbarButton", "contextMenuItem"]}
-                    entityType="issue"
-                    context={{
-                      companyId: issue.companyId,
-                      projectId: issue.projectId ?? null,
-                      entityId: issue.id,
-                      entityType: "issue",
-                    }}
-                    className="flex flex-wrap gap-2"
-                    itemClassName="inline-flex"
-                    missingBehavior="placeholder"
-                  />
-
-                  <PluginLauncherOutlet
-                    placementZones={["toolbarButton"]}
-                    entityType="issue"
-                    context={{
-                      companyId: issue.companyId,
-                      projectId: issue.projectId ?? null,
-                      entityId: issue.id,
-                      entityType: "issue",
-                    }}
-                    className="flex flex-wrap gap-2"
-                    itemClassName="inline-flex"
-                  />
-
-                  <PluginSlotOutlet
-                    slotTypes={["taskDetailView"]}
-                    entityType="issue"
-                    context={{
-                      companyId: issue.companyId,
-                      projectId: issue.projectId ?? null,
-                      entityId: issue.id,
-                      entityType: "issue",
-                    }}
-                    className="space-y-3"
-                    itemClassName="rounded-lg border border-border p-3"
-                    missingBehavior="placeholder"
-                  />
+              <div className="rounded-2xl border border-border bg-card/80 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3" data-testid="issue-hidden-debug-summary">
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Hidden Debug
+                    </p>
+                    <h3 className="text-lg font-semibold text-foreground">
+                      Operational panels kept out of the main chat.
+                    </h3>
+                    <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+                      The primary route stays single-chat. Open this hidden sheet with <span className="font-mono">?ops=1</span> when you need raw runs, comments, activity or support panels.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <StatusBadge status={issue.status} />
+                    {hasLiveRuns ? <StatusBadge status="running" /> : null}
+                    {queuedComments.length > 0 ? (
+                      <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
+                        Queue {queuedComments.length}
+                      </span>
+                    ) : null}
+                    {linkedApprovals?.length ? (
+                      <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
+                        Approvals {linkedApprovals.length}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
+              </div>
 
-                <div className="space-y-4">
+              {childIssues.length > 0 ? (
+                <div className="space-y-3 rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-subissues">
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sub-issues</p>
+                    <p className="text-sm text-muted-foreground">Related issue tree kept outside the main chat.</p>
+                  </div>
+                  <div className="overflow-hidden rounded-2xl border border-border bg-card">
+                    {childIssues.map((child) => (
+                      <Link
+                        key={child.id}
+                        to={createIssueDetailPath(child.identifier ?? child.id, location.state, location.search)}
+                        state={location.state}
+                        className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent/20"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <StatusIcon status={child.status} />
+                          <PriorityIcon priority={child.priority} />
+                          <span className="shrink-0 font-mono text-muted-foreground">
+                            {child.identifier ?? child.id.slice(0, 8)}
+                          </span>
+                          <span className="truncate">{child.title}</span>
+                        </div>
+                        {child.assigneeAgentId && (() => {
+                          const name = agentMap.get(child.assigneeAgentId)?.name;
+                          return name
+                            ? <Identity name={name} size="sm" />
+                            : <span className="font-mono text-muted-foreground">{child.assigneeAgentId.slice(0, 8)}</span>;
+                        })()}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {linkedApprovals && linkedApprovals.length > 0 ? (
+                <div className="space-y-3 rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-approvals">
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Approvals</p>
+                    <p className="text-sm text-muted-foreground">Approval trail is hidden from the main chat but still available here.</p>
+                  </div>
+                  <div className="overflow-hidden rounded-2xl border border-border bg-card">
+                    {linkedApprovals.map((approval) => (
+                      <Link
+                        key={approval.id}
+                        to={`/approvals/${approval.id}`}
+                        className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent/20"
+                      >
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={approval.status} />
+                          <span className="font-medium">
+                            {approval.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                          </span>
+                          <span className="font-mono text-muted-foreground">{approval.id.slice(0, 8)}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground" title={formatFullTimeTitle(approval.createdAt)}>
+                          {formatClockTime(approval.createdAt)}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <details className="rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-advanced-debug">
+                <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
+                  Advanced debug surfaces
+                </summary>
+                <div className="mt-4 space-y-4">
                   <IssueWorkspaceCard
                     issue={issue}
                     project={orderedProjects.find((p) => p.id === issue.projectId) ?? null}
                     onUpdate={(data) => updateIssue.mutate(data)}
                   />
+
+                  <Separator />
+
+                  <IssueDocumentsSection
+                    issue={issue}
+                    canDeleteDocuments={Boolean(session?.user?.id)}
+                    mentions={mentionOptions}
+                    imageUploadHandler={async (file) => {
+                      const attachment = await uploadAttachment.mutateAsync(file);
+                      return attachment.contentPath;
+                    }}
+                    extraActions={!hasAttachments ? attachmentUploadButton : undefined}
+                  />
+
+                  {hasAttachments ? (
+                    <div
+                      className={cn("space-y-3 rounded-lg transition-colors")}
+                      onDragEnter={(evt) => {
+                        evt.preventDefault();
+                        setAttachmentDragActive(true);
+                      }}
+                      onDragOver={(evt) => {
+                        evt.preventDefault();
+                        setAttachmentDragActive(true);
+                      }}
+                      onDragLeave={(evt) => {
+                        if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
+                        setAttachmentDragActive(false);
+                      }}
+                      onDrop={(evt) => void handleAttachmentDrop(evt)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
+                        {attachmentUploadButton}
+                      </div>
+
+                      {attachmentError && (
+                        <p className="text-xs text-destructive">{attachmentError}</p>
+                      )}
+
+                      <div className="space-y-2">
+                        {attachmentList.map((attachment) => (
+                          <div key={attachment.id} className="border border-border rounded-md p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <a
+                                href={attachment.contentPath}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs hover:underline truncate"
+                                title={attachment.originalFilename ?? attachment.id}
+                              >
+                                {attachment.originalFilename ?? attachment.id}
+                              </a>
+                              <button
+                                type="button"
+                                className="text-muted-foreground hover:text-destructive"
+                                onClick={() => deleteAttachment.mutate(attachment.id)}
+                                disabled={deleteAttachment.isPending}
+                                title="Delete attachment"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
+                            </p>
+                            {isImageAttachment(attachment) && (
+                              <a href={attachment.contentPath} target="_blank" rel="noreferrer">
+                                <img
+                                  src={attachment.contentPath}
+                                  alt={attachment.originalFilename ?? "attachment"}
+                                  className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
+                                  loading="lazy"
+                                />
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {issuePluginDetailSlots.length > 0 ? (
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Plugin panels</p>
+                      {issuePluginDetailSlots.map((slot) => (
+                        <PluginSlotMount
+                          key={slot.id}
+                          slot={slot}
+                          context={{
+                            companyId: issue.companyId,
+                            projectId: issue.projectId ?? null,
+                            entityId: issue.id,
+                            entityType: "issue",
+                          }}
+                          missingBehavior="placeholder"
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </details>
+
+              <div className="rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-history">
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">History</p>
+                  <h3 className="text-lg font-semibold text-foreground">Raw comments, runs and activity.</h3>
+                  <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+                    These panels stay out of the main route and only open when you need to debug or audit the issue timeline.
+                  </p>
                 </div>
               </div>
 
-              <Separator />
+              <Tabs value={historyTab} onValueChange={setHistoryTab} className="space-y-3">
+                <TabsList variant="line" className="w-full justify-start gap-1">
+                  <TabsTrigger value="runs" className="gap-1.5">
+                    <Repeat className="h-3.5 w-3.5" />
+                    Runs
+                  </TabsTrigger>
+                  <TabsTrigger value="comments" className="gap-1.5">
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Comments
+                  </TabsTrigger>
+                  <TabsTrigger value="activity" className="gap-1.5">
+                    <ActivityIcon className="h-3.5 w-3.5" />
+                    Activity
+                  </TabsTrigger>
+                </TabsList>
 
-              <IssueDocumentsSection
-                issue={issue}
-                canDeleteDocuments={Boolean(session?.user?.id)}
-                mentions={mentionOptions}
-                imageUploadHandler={async (file) => {
-                  const attachment = await uploadAttachment.mutateAsync(file);
-                  return attachment.contentPath;
-                }}
-                extraActions={!hasAttachments ? attachmentUploadButton : undefined}
-              />
-
-              {hasAttachments ? (
-                <div
-                  className={cn("space-y-3 rounded-lg transition-colors")}
-                  onDragEnter={(evt) => {
-                    evt.preventDefault();
-                    setAttachmentDragActive(true);
-                  }}
-                  onDragOver={(evt) => {
-                    evt.preventDefault();
-                    setAttachmentDragActive(true);
-                  }}
-                  onDragLeave={(evt) => {
-                    if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
-                    setAttachmentDragActive(false);
-                  }}
-                  onDrop={(evt) => void handleAttachmentDrop(evt)}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
-                    {attachmentUploadButton}
-                  </div>
-
-                  {attachmentError && (
-                    <p className="text-xs text-destructive">{attachmentError}</p>
-                  )}
-
-                  <div className="space-y-2">
-                    {attachmentList.map((attachment) => (
-                      <div key={attachment.id} className="border border-border rounded-md p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <a
-                            href={attachment.contentPath}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs hover:underline truncate"
-                            title={attachment.originalFilename ?? attachment.id}
-                          >
-                            {attachment.originalFilename ?? attachment.id}
-                          </a>
-                          <button
-                            type="button"
-                            className="text-muted-foreground hover:text-destructive"
-                            onClick={() => deleteAttachment.mutate(attachment.id)}
-                            disabled={deleteAttachment.isPending}
-                            title="Delete attachment"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                <TabsContent value="runs" className="space-y-4">
+                  {compactRunStatusGroups.length > 0 ? (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      {compactRunStatusGroups.map((group) => (
+                        <div key={group.label} className="rounded-2xl border border-border bg-card px-4 py-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Grouped</div>
+                          <div className="mt-2 text-sm font-medium text-foreground">{group.label}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{group.count} runs</div>
                         </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
-                        </p>
-                        {isImageAttachment(attachment) && (
-                          <a href={attachment.contentPath} target="_blank" rel="noreferrer">
-                            <img
-                              src={attachment.contentPath}
-                              alt={attachment.originalFilename ?? "attachment"}
-                              className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
-                              loading="lazy"
-                            />
-                          </a>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </TabsContent>
-
-            <TabsContent value="subissues">
-              {childIssues.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
-                  No sub-issues.
-                </div>
-              ) : (
-                <div className="overflow-hidden rounded-2xl border border-border bg-card">
-                  {childIssues.map((child) => (
-                    <Link
-                      key={child.id}
-                      to={createIssueDetailPath(child.identifier ?? child.id, location.state, location.search)}
-                      state={location.state}
-                      className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent/20"
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <StatusIcon status={child.status} />
-                        <PriorityIcon priority={child.priority} />
-                        <span className="shrink-0 font-mono text-muted-foreground">
-                          {child.identifier ?? child.id.slice(0, 8)}
-                        </span>
-                        <span className="truncate">{child.title}</span>
-                      </div>
-                      {child.assigneeAgentId && (() => {
-                        const name = agentMap.get(child.assigneeAgentId)?.name;
-                        return name
-                          ? <Identity name={name} size="sm" />
-                          : <span className="font-mono text-muted-foreground">{child.assigneeAgentId.slice(0, 8)}</span>;
-                      })()}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            {linkedApprovals && linkedApprovals.length > 0 ? (
-              <TabsContent value="approvals">
-                <div className="overflow-hidden rounded-2xl border border-border bg-card">
-                  {linkedApprovals.map((approval) => (
-                    <Link
-                      key={approval.id}
-                      to={`/approvals/${approval.id}`}
-                      className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent/20"
-                    >
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status={approval.status} />
-                        <span className="font-medium">
-                          {approval.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                        </span>
-                        <span className="font-mono text-muted-foreground">{approval.id.slice(0, 8)}</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground" title={formatFullTimeTitle(approval.createdAt)}>
-                        {formatClockTime(approval.createdAt)}
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </TabsContent>
-            ) : null}
-
-            {activePluginTab && (
-              <TabsContent value={activePluginTab.value}>
-                <PluginSlotMount
-                  slot={activePluginTab.slot}
-                  context={{
-                    companyId: issue.companyId,
-                    projectId: issue.projectId ?? null,
-                    entityId: issue.id,
-                    entityType: "issue",
-                  }}
-                  missingBehavior="placeholder"
-                />
-              </TabsContent>
-            )}
-          </Tabs>
-        </TabsContent>
-
-        <TabsContent value="history" className="space-y-4">
-          <div className="rounded-2xl border border-border bg-card/80 p-4">
-            <div className="space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">History</p>
-              <h3 className="text-lg font-semibold text-foreground">Сжатый audit trail без дублей и одинаковых карточек.</h3>
-              <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                Здесь живут raw comments, runs и activity. Chat и Dashboard больше не повторяют этот поток.
-              </p>
-            </div>
-          </div>
-
-          <Tabs value={historyTab} onValueChange={setHistoryTab} className="space-y-3">
-            <TabsList variant="line" className="w-full justify-start gap-1">
-              <TabsTrigger value="runs" className="gap-1.5">
-                <Repeat className="h-3.5 w-3.5" />
-                Runs
-              </TabsTrigger>
-              <TabsTrigger value="comments" className="gap-1.5">
-                <MessageSquare className="h-3.5 w-3.5" />
-                Comments
-              </TabsTrigger>
-              <TabsTrigger value="activity" className="gap-1.5">
-                <ActivityIcon className="h-3.5 w-3.5" />
-                Activity
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="runs" className="space-y-4">
-              {compactRunStatusGroups.length > 0 ? (
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  {compactRunStatusGroups.map((group) => (
-                    <div key={group.label} className="rounded-2xl border border-border bg-card px-4 py-3">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Grouped</div>
-                      <div className="mt-2 text-sm font-medium text-foreground">{group.label}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{group.count} runs</div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              ) : null}
+                  ) : null}
 
-              {!timelineRuns.length ? (
-                <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
-                  No runs yet.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {timelineRuns.slice(0, 40).map((run) => (
-                    <HistoryRunRow
-                      key={run.runId}
-                      run={run}
-                      agentName={agentMap.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
-                    />
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="comments">
-              <CommentThread
-                comments={timelineComments}
-                queuedComments={queuedComments}
-                linkedRuns={[]}
-                companyId={issue.companyId}
-                projectId={issue.projectId}
-                issueStatus={issue.status}
-                agentMap={agentMap}
-                draftKey={`paperclip:issue-comment-draft:${issue.id}`}
-                enableReassign
-                reassignOptions={commentReassignOptions}
-                currentAssigneeValue={actualAssigneeValue}
-                suggestedAssigneeValue={suggestedAssigneeValue}
-                mentions={mentionOptions}
-                onInterruptQueued={async (runId) => {
-                  await interruptQueuedComment.mutateAsync(runId);
-                }}
-                interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
-                onAdd={async () => {}}
-                imageUploadHandler={async (file) => {
-                  const attachment = await uploadAttachment.mutateAsync(file);
-                  return attachment.contentPath;
-                }}
-                onAttachImage={async (file) => {
-                  await uploadAttachment.mutateAsync(file);
-                }}
-                showComposer={false}
-                title="Comments"
-              />
-            </TabsContent>
-
-            <TabsContent value="activity">
-              {linkedRuns && linkedRuns.length > 0 && (
-                <div className="mb-3 rounded-2xl border border-border bg-card px-4 py-3">
-                  <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>
-                  {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
-                    <div className="text-xs text-muted-foreground">No cost data yet.</div>
+                  {!timelineRuns.length ? (
+                    <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                      No runs yet.
+                    </div>
                   ) : (
-                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
-                      {issueCostSummary.hasCost && (
-                        <span className="font-medium text-foreground">
-                          ${issueCostSummary.cost.toFixed(4)}
-                        </span>
-                      )}
-                      {issueCostSummary.hasTokens && (
-                        <span>
-                          Tokens {formatTokens(issueCostSummary.totalTokens)}
-                          {issueCostSummary.cached > 0
-                            ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
-                            : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
-                        </span>
+                    <div className="space-y-3">
+                      {timelineRuns.slice(0, 40).map((run) => (
+                        <HistoryRunRow
+                          key={run.runId}
+                          run={run}
+                          agentName={agentMap.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="comments">
+                  <CommentThread
+                    comments={timelineComments}
+                    queuedComments={queuedComments}
+                    linkedRuns={[]}
+                    companyId={issue.companyId}
+                    projectId={issue.projectId}
+                    issueStatus={issue.status}
+                    agentMap={agentMap}
+                    draftKey={`paperclip:issue-comment-draft:${issue.id}`}
+                    enableReassign
+                    reassignOptions={commentReassignOptions}
+                    currentAssigneeValue={actualAssigneeValue}
+                    suggestedAssigneeValue={suggestedAssigneeValue}
+                    mentions={mentionOptions}
+                    onInterruptQueued={async (runId) => {
+                      await interruptQueuedComment.mutateAsync(runId);
+                    }}
+                    interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
+                    onAdd={async () => {}}
+                    imageUploadHandler={async (file) => {
+                      const attachment = await uploadAttachment.mutateAsync(file);
+                      return attachment.contentPath;
+                    }}
+                    onAttachImage={async (file) => {
+                      await uploadAttachment.mutateAsync(file);
+                    }}
+                    showComposer={false}
+                    title="Comments"
+                  />
+                </TabsContent>
+
+                <TabsContent value="activity">
+                  {linkedRuns && linkedRuns.length > 0 && (
+                    <div className="mb-3 rounded-2xl border border-border bg-card px-4 py-3">
+                      <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>
+                      {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
+                        <div className="text-xs text-muted-foreground">No cost data yet.</div>
+                      ) : (
+                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
+                          {issueCostSummary.hasCost && (
+                            <span className="font-medium text-foreground">
+                              ${issueCostSummary.cost.toFixed(4)}
+                            </span>
+                          )}
+                          {issueCostSummary.hasTokens && (
+                            <span>
+                              Tokens {formatTokens(issueCostSummary.totalTokens)}
+                              {issueCostSummary.cached > 0
+                                ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
+                                : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
-                </div>
-              )}
-              {!activity || activity.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
-                  No activity yet.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {activity.slice(0, 60).map((evt) => (
-                    <div key={evt.id} className="rounded-2xl border border-border bg-card px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <ActorIdentity evt={evt} agentMap={agentMap} />
-                        <span className="text-sm text-foreground">{formatAction(evt.action, evt.details)}</span>
-                        <span className="ml-auto text-xs text-muted-foreground" title={formatFullTimeTitle(evt.createdAt)}>
-                          {formatClockTime(evt.createdAt)}
-                        </span>
-                      </div>
+                  {!activity || activity.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                      No activity yet.
                     </div>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-          </Tabs>
-        </TabsContent>
-      </Tabs>
+                  ) : (
+                    <div className="space-y-2">
+                      {activity.slice(0, 60).map((evt) => (
+                        <div key={evt.id} className="rounded-2xl border border-border bg-card px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <ActorIdentity evt={evt} agentMap={agentMap} />
+                            <span className="text-sm text-foreground">{formatAction(evt.action, evt.details)}</span>
+                            <span className="ml-auto text-xs text-muted-foreground" title={formatFullTimeTitle(evt.createdAt)}>
+                              {formatClockTime(evt.createdAt)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </div>
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
 
       {/* Mobile properties drawer */}
       <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>

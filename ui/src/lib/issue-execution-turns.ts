@@ -26,6 +26,7 @@ export interface IssueExecutionCommentContext {
   turns: IssueExecutionTurn[];
   latestExecutedTurn: IssueExecutionTurn | null;
   pendingUserRequests: string[];
+  pendingConversation: IssueNarrativeChatMessage[];
   projectionWarning: string | null;
 }
 
@@ -386,6 +387,51 @@ function normalizeRequest(value: string | null | undefined): string {
   return cleanMarkdownText(value ?? "").toLowerCase();
 }
 
+function buildPendingConversationMessages(input: {
+  comments: Array<
+    Pick<IssueComment, "id" | "authorAgentId" | "authorUserId" | "body" | "createdAt">
+  >;
+  latestExecutedTurn: IssueExecutionTurn | null;
+}): IssueNarrativeChatMessage[] {
+  const boundaryTimestamp = input.latestExecutedTurn?.settledAt
+    ?? input.latestExecutedTurn?.startedAt
+    ?? null;
+  const boundaryMs = boundaryTimestamp
+    ? new Date(normalizeTimestamp(boundaryTimestamp)).getTime()
+    : Number.NEGATIVE_INFINITY;
+
+  return input.comments
+    .filter((comment) => new Date(normalizeTimestamp(comment.createdAt)).getTime() > boundaryMs)
+    .flatMap((comment): IssueNarrativeChatMessage[] => {
+      if (isPlainUserComment(comment)) {
+        const request = cleanMarkdownText(comment.body);
+        if (!request || shouldIgnoreAsOperationalUserComment(request)) return [];
+        return [{
+          id: `pending-comment-${comment.id}`,
+          speaker: "user",
+          body: request,
+          createdAt: normalizeTimestamp(comment.createdAt),
+          tone: "info",
+        }];
+      }
+
+      if (parseBridgeComment(comment.body) || parseMergeRequestComment(comment.body)) {
+        return [];
+      }
+
+      const body = cleanMarkdownText(comment.body);
+      if (!body) return [];
+
+      return [{
+        id: `pending-comment-${comment.id}`,
+        speaker: "assistant",
+        body,
+        createdAt: normalizeTimestamp(comment.createdAt),
+        tone: "working",
+      }];
+    });
+}
+
 export function buildIssueExecutionCommentContext(
   input: IssueExecutionCommentContextInput,
 ): IssueExecutionCommentContext {
@@ -470,6 +516,10 @@ export function buildIssueExecutionCommentContext(
     turns,
     latestExecutedTurn,
     pendingUserRequests,
+    pendingConversation: buildPendingConversationMessages({
+      comments: ordered,
+      latestExecutedTurn,
+    }),
     projectionWarning,
   };
 }
@@ -588,6 +638,21 @@ export function buildIssueNarrativeChatMessages(input: {
         speaker: "assistant",
         createdAt: bridgeReply.createdAt,
         ...bridgeReply.reply,
+      });
+      continue;
+    }
+
+    const agentReply = [...replyCandidates]
+      .reverse()
+      .find((candidate) => !parseMergeRequestComment(candidate.body) && !parseBridgeComment(candidate.body) && Boolean(cleanMarkdownText(candidate.body)));
+
+    if (agentReply) {
+      messages.push({
+        id: `comment-${comment.id}-agent-reply`,
+        speaker: "assistant",
+        createdAt: normalizeTimestamp(agentReply.createdAt),
+        body: cleanMarkdownText(agentReply.body),
+        tone: "working",
       });
     }
   }

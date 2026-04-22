@@ -176,6 +176,7 @@ function CommentCard({
     <div
       key={comment.id}
       id={`comment-${comment.id}`}
+      data-testid="issue-comment-card"
       className={`border p-3 overflow-hidden min-w-0 rounded-sm transition-colors duration-1000 ${
         isQueued
           ? "border-amber-300/70 bg-amber-50/70 dark:border-amber-500/40 dark:bg-amber-500/10"
@@ -519,7 +520,7 @@ export function CommentThread({
   const canSubmit = !submitting && !!body.trim();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="issue-comment-thread">
       <h3 className="text-sm font-semibold">{title} ({timeline.length + queuedComments.length})</h3>
 
       {timeline.length > 0 ? (

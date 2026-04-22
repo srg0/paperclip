@@ -55,6 +55,7 @@ function makeContext(overrides: Partial<IssueExecutionCommentContext> = {}): Iss
       "старый follow-up 2",
       "чек",
     ],
+    pendingConversation: [],
     projectionWarning: "После последнего Atlas turn появились новые user comments (3), но новый execution ещё не начался.",
     ...overrides,
   };
@@ -97,11 +98,10 @@ describe("buildIssueConversationModel", () => {
     expect(pendingTurn?.summary).toContain("TURN 3");
     expect(pendingTurn?.summary).toContain("Atlas Executor");
     expect(pendingTurn?.summary).toContain("slot ai01");
-    expect(pendingTurn?.summary).toContain("2 earlier messages folded");
-    expect(pendingTurn?.nextAction).toContain("2 earlier follow-up messages");
-    const messagesBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Messages");
-    expect(messagesBundle?.itemCount).toBe(2);
-    expect(messagesBundle?.items).toEqual(["старый follow-up 1", "старый follow-up 2"]);
+    expect(pendingTurn?.nextAction).toBeNull();
+    const runningBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Running");
+    expect(runningBundle?.summary).toContain("TURN 3");
+    expect(runningBundle?.items).toBeUndefined();
   });
 
   it("does not invent a queued turn when no live launch exists", () => {
@@ -117,8 +117,49 @@ describe("buildIssueConversationModel", () => {
     expect(pendingTurn?.status).toBe("waiting");
     expect(pendingTurn?.statusLabel).toBe("Waiting");
     expect(pendingTurn?.summary).toContain("No live run yet");
-    expect(pendingTurn?.nextAction).toContain("2 earlier follow-up messages");
-    const messagesBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Messages");
-    expect(messagesBundle?.items).toEqual(["старый follow-up 1", "старый follow-up 2"]);
+    expect(pendingTurn?.nextAction).toBeNull();
+    expect(pendingTurn?.phaseBundles).toEqual([]);
+  });
+
+  it("shows the latest durable assistant ack instead of an empty folded placeholder", () => {
+    const model = buildIssueConversationModel({
+      context: makeContext({
+        pendingUserRequests: ["старый follow-up 1", "[pw] короткий follow-up"],
+        pendingConversation: [
+          {
+            id: "pending-user-1",
+            speaker: "user",
+            body: "старый follow-up 1",
+            createdAt: "2026-04-21T18:13:00.000Z",
+            tone: "info",
+          },
+          {
+            id: "pending-user-2",
+            speaker: "user",
+            body: "[pw] короткий follow-up",
+            createdAt: "2026-04-21T18:14:00.000Z",
+            tone: "info",
+          },
+          {
+            id: "pending-assistant-1",
+            speaker: "assistant",
+            body: "Принял follow-up. Это Atlas Executor.",
+            createdAt: "2026-04-21T18:14:05.000Z",
+            tone: "working",
+          },
+        ],
+      }),
+      liveRuns: [],
+      transcriptByRun: new Map(),
+      verbosity: "auto",
+    });
+
+    const pendingTurn = model.turns.at(-1);
+    expect(pendingTurn?.request).toBe("[pw] короткий follow-up");
+    expect(pendingTurn?.summary).toContain("Принял follow-up. Это Atlas Executor.");
+    expect(pendingTurn?.tone).toBe("working");
+    const runningBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Thinking");
+    expect(runningBundle?.items).toEqual(["Принял follow-up. Это Atlas Executor."]);
+    expect(pendingTurn?.nextAction).toBeNull();
   });
 });
