@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { Agent, Issue, IssueDocument } from "@paperclipai/shared";
 import {
   buildIssueExecutionHeaderModel,
+  derivePendingAtlasFollowupStatusFromCommentContext,
   buildPendingAtlasFollowupStatus,
   parseExecutionDocument,
   shouldUsePendingAtlasLiveSignal,
@@ -295,6 +296,83 @@ describe("buildPendingAtlasFollowupStatus", () => {
     expect(status.state).toBe("queued");
     expect(status.title).toBe("Starting");
     expect(status.turnLabel).toBe("TURN 3");
+  });
+});
+
+describe("derivePendingAtlasFollowupStatusFromCommentContext", () => {
+  it("restores an accepted-thinking state from durable pending conversation after reload", () => {
+    const status = derivePendingAtlasFollowupStatusFromCommentContext({
+      latestExecutedTurn: {
+        sequence: 10,
+        request: "предыдущий turn",
+        events: [],
+        status: "settled",
+        startedAt: "2026-04-22T18:00:00.000Z",
+        settledAt: "2026-04-22T18:01:00.000Z",
+        latestCommentId: null,
+        standUrl: null,
+        evidenceUrl: null,
+        verifierScope: null,
+        outcome: null,
+      },
+      pendingUserRequests: ["[pw] Ответь сюда же коротким ack и начни новый follow-up turn."],
+      pendingConversation: [
+        {
+          id: "pending-user-1",
+          speaker: "user",
+          body: "[pw] Ответь сюда же коротким ack и начни новый follow-up turn.",
+          createdAt: "2026-04-22T18:12:01.214Z",
+          tone: "info",
+        },
+        {
+          id: "pending-assistant-1",
+          speaker: "assistant",
+          body: "Принял follow-up. Это Atlas Executor.",
+          createdAt: "2026-04-22T18:12:11.000Z",
+          tone: "working",
+        },
+      ],
+    });
+
+    expect(status).not.toBeNull();
+    expect(status?.state).toBe("accepted");
+    expect(status?.title).toBe("Thinking");
+    expect(status?.summary).toBe("Atlas Executor");
+    expect(status?.turnLabel).toBe("TURN 11");
+  });
+
+  it("shows waiting when a follow-up user message exists but Atlas has not acked yet", () => {
+    const status = derivePendingAtlasFollowupStatusFromCommentContext({
+      latestExecutedTurn: {
+        sequence: 4,
+        request: "предыдущий turn",
+        events: [],
+        status: "settled",
+        startedAt: "2026-04-22T17:00:00.000Z",
+        settledAt: "2026-04-22T17:01:00.000Z",
+        latestCommentId: null,
+        standUrl: null,
+        evidenceUrl: null,
+        verifierScope: null,
+        outcome: null,
+      },
+      pendingUserRequests: ["новый follow-up"],
+      pendingConversation: [
+        {
+          id: "pending-user-2",
+          speaker: "user",
+          body: "новый follow-up",
+          createdAt: "2026-04-22T18:15:00.000Z",
+          tone: "info",
+        },
+      ],
+    });
+
+    expect(status).not.toBeNull();
+    expect(status?.state).toBe("pending");
+    expect(status?.title).toBe("Waiting");
+    expect(status?.summary).toBe("Atlas Executor");
+    expect(status?.turnLabel).toBe("TURN 5");
   });
 });
 

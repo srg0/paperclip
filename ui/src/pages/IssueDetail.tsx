@@ -37,6 +37,7 @@ import { IssueConversationComposer } from "../components/issue-conversation/Issu
 import { IssueConversationSurface } from "../components/issue-conversation/IssueConversationSurface";
 import {
   buildIssueExecutionHeaderModel,
+  derivePendingAtlasFollowupStatusFromCommentContext,
   buildPendingAtlasFollowupStatus,
   parseExecutionDocument,
 } from "../lib/issue-execution-flow";
@@ -470,21 +471,23 @@ export function IssueDetail() {
         turnLabel: issueChatLiveSignal.turnLabel,
       };
     }
-    if (!pendingAtlasFollowup) return null;
-    return buildPendingAtlasFollowupStatus({
-      pendingSince: pendingAtlasFollowup.submittedAt,
-      baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
-      parsed: parsedExecutionDocument,
-      dispatch: {
-        status: pendingAtlasFollowup.dispatchStatus,
-        requestType: pendingAtlasFollowup.requestType,
-        detail: pendingAtlasFollowup.detail,
-        turnNumber: pendingAtlasFollowup.turnNumber,
-        turnLabel: pendingAtlasFollowup.turnLabel,
-      },
-      live: null,
-    });
-  }, [issueChatLiveSignal, parsedExecutionDocument, pendingAtlasFollowup]);
+    if (pendingAtlasFollowup) {
+      return buildPendingAtlasFollowupStatus({
+        pendingSince: pendingAtlasFollowup.submittedAt,
+        baseTurnNumber: pendingAtlasFollowup.baseTurnNumber,
+        parsed: parsedExecutionDocument,
+        dispatch: {
+          status: pendingAtlasFollowup.dispatchStatus,
+          requestType: pendingAtlasFollowup.requestType,
+          detail: pendingAtlasFollowup.detail,
+          turnNumber: pendingAtlasFollowup.turnNumber,
+          turnLabel: pendingAtlasFollowup.turnLabel,
+        },
+        live: null,
+      });
+    }
+    return derivePendingAtlasFollowupStatusFromCommentContext(executionCommentContext);
+  }, [executionCommentContext, issueChatLiveSignal, parsedExecutionDocument, pendingAtlasFollowup]);
 
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,

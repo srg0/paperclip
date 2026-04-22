@@ -1,6 +1,7 @@
 import type { ActivityEvent, Agent, Issue, IssueDocument } from "@paperclipai/shared";
 import type { RunForIssue } from "@/api/activity";
 import type { ActiveRunForIssue, LiveRunForIssue } from "@/api/heartbeats";
+import type { IssueExecutionCommentContext } from "./issue-execution-turns";
 
 export type IssueExecutionStageKey =
   | "orchestrate"
@@ -426,6 +427,34 @@ export function buildPendingAtlasFollowupStatus(input: {
     summary: turnLabel ?? "Atlas",
     detail: null,
     turnLabel,
+  };
+}
+
+export function derivePendingAtlasFollowupStatusFromCommentContext(
+  context: Pick<IssueExecutionCommentContext, "latestExecutedTurn" | "pendingUserRequests" | "pendingConversation"> | null,
+): PendingAtlasFollowupStatus | null {
+  if (!context || context.pendingUserRequests.length === 0) return null;
+
+  const latestPendingUser = [...context.pendingConversation]
+    .reverse()
+    .find((message) => message.speaker === "user") ?? null;
+  const latestPendingAssistant = [...context.pendingConversation]
+    .reverse()
+    .find((message) => message.speaker === "assistant") ?? null;
+
+  const latestPendingUserMs = latestPendingUser ? new Date(latestPendingUser.createdAt).getTime() : Number.NaN;
+  const latestPendingAssistantMs = latestPendingAssistant ? new Date(latestPendingAssistant.createdAt).getTime() : Number.NaN;
+  const hasAssistantAck =
+    Number.isFinite(latestPendingAssistantMs)
+    && (!Number.isFinite(latestPendingUserMs) || latestPendingAssistantMs >= latestPendingUserMs);
+
+  const nextTurnNumber = (context.latestExecutedTurn?.sequence ?? 0) + 1;
+  return {
+    state: hasAssistantAck ? "accepted" : "pending",
+    title: hasAssistantAck ? "Thinking" : "Waiting",
+    summary: "Atlas Executor",
+    detail: null,
+    turnLabel: nextTurnNumber > 0 ? `TURN ${nextTurnNumber}` : null,
   };
 }
 
