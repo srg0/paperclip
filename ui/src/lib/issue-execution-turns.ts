@@ -159,6 +159,10 @@ function parseMergeRequestComment(body: string): ParsedMergeRequestComment | nul
   };
 }
 
+function hasAtlasSemanticReplyMarker(body: string | null | undefined): boolean {
+  return /<!--\s*atlas-semantic-reply:[^>]+-->/i.test(String(body ?? ""));
+}
+
 export function isProgrammedAtlasAckText(body: string | null | undefined): boolean {
   const normalized = cleanMarkdownText(body ?? "");
   if (!normalized) return false;
@@ -327,64 +331,6 @@ function summarizeTurnForHuman(turn: IssueExecutionTurn): Omit<IssueNarrativeCha
   };
 }
 
-function summarizeBridgeCommentForHuman(comment: ParsedBridgeComment, sourceCommentId: string | null): Omit<IssueNarrativeChatMessage, "id" | "createdAt" | "speaker"> | null {
-  const title = cleanMarkdownText(comment.title ?? "");
-  const proof = humanizeVerifierScope(comment.verifierScope);
-  const links: IssueNarrativeChatLink[] = [
-    { label: "Полное описание", url: "#document-atlas-execution" },
-    { label: "Diff / файлы", url: "#document-atlas-change-summary" },
-    { label: "Артефакты / debug", url: "#document-atlas-debug-pack" },
-  ];
-  if (sourceCommentId) links.push({ label: "Комментарий", url: `#comment-${sourceCommentId}` });
-  if (comment.standUrl) links.push({ label: "Открыть стенд", url: comment.standUrl });
-  if (comment.evidenceUrl) links.push({ label: "Открыть evidence", url: comment.evidenceUrl });
-
-  if (!title && !comment.summary && !proof) return null;
-
-  const lowerTitle = title.toLowerCase();
-  if (lowerTitle.includes("attach-ready") || lowerTitle.includes("взят в работу") || lowerTitle.includes("execution запущен")) {
-    return {
-      body: compactLines([
-        "Задача запущена, жду стенд и первый результат.",
-        comment.standUrl ? `Стенд: ${comment.standUrl}.` : null,
-      ]),
-      tone: "working",
-      links,
-    };
-  }
-  if (lowerTitle.includes("проверка не прошла") || lowerTitle.includes("с замечаниями")) {
-    return {
-      body: compactLines([
-        "Автопроверка не подтвердила результат.",
-        proof,
-      ]),
-      tone: "error",
-      links,
-    };
-  }
-  if (lowerTitle.includes("готова к ревью") || lowerTitle.includes("готово для проверки человеком")) {
-    const genericProof = proof?.includes("не доказывает") || proof?.includes("слишком общей");
-    return {
-      body: compactLines([
-        genericProof
-          ? "Правка выглядит готовой, но автопроверка пока не доказала именно тот результат, который ты просил."
-          : "Правка выглядит готовой к review.",
-        proof,
-      ]),
-      tone: genericProof ? "warn" : "success",
-      links,
-    };
-  }
-  return {
-    body: compactLines([
-      cleanMarkdownText(comment.summary ?? comment.title ?? ""),
-      proof,
-    ]),
-    tone: "info",
-    links,
-  };
-}
-
 function compactLines(parts: Array<string | null | undefined>): string {
   return parts
     .map((part) => cleanMarkdownText(part ?? ""))
@@ -481,10 +427,6 @@ export function buildIssueExecutionCommentContext(
         currentTurn.status = currentTurn.settledAt ? "settled" : currentTurn.status;
         currentTurn = targetTurn;
       }
-    } else if (isTurnStartRole(parsed.role) && currentTurn.events.length > 0 && pendingUserRequests.length > 0) {
-      currentTurn.status = currentTurn.settledAt ? "settled" : currentTurn.status;
-      currentTurn = ensureTurn(turns.length + 1);
-      targetTurn = currentTurn;
     }
 
     const createdAt = normalizeTimestamp(comment.createdAt);
@@ -636,23 +578,18 @@ export function buildIssueNarrativeChatMessages(input: {
       continue;
     }
 
-    const bridgeReply = replyCandidates
-      .map((candidate) => ({ candidate, parsed: parseBridgeComment(candidate.body) }))
-      .filter((entry) => entry.parsed)
-      .map((entry) => ({
-        createdAt: normalizeTimestamp(entry.candidate.createdAt),
-        reply: summarizeBridgeCommentForHuman(entry.parsed!, entry.candidate.id),
-      }))
-      .filter((entry) => entry.reply)
-      .pop();
+    const semanticReply = [...replyCandidates]
+      .reverse()
+      .find((candidate) => hasAtlasSemanticReplyMarker(candidate.body) && Boolean(cleanMarkdownText(candidate.body)));
 
-    if (bridgeReply?.reply) {
+    if (semanticReply) {
       messages.push({
-        id: `comment-${comment.id}-reply`,
+        id: `comment-${comment.id}-semantic-reply`,
         speaker: "assistant",
-        createdAt: bridgeReply.createdAt,
-        kind: isProgrammedAtlasAckText(bridgeReply.reply.body) ? "system_ack" : "semantic_reply",
-        ...bridgeReply.reply,
+        createdAt: normalizeTimestamp(semanticReply.createdAt),
+        body: cleanMarkdownText(semanticReply.body),
+        tone: "working",
+        kind: "semantic_reply",
       });
       continue;
     }

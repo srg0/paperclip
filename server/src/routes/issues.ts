@@ -736,32 +736,9 @@ export function issueRoutes(
         targetAgentName,
       });
       if (atlasDispatch.atlasFollowup.status === "accepted") {
-        const ackComment = await svc.addComment(
-          input.issue.id,
-          buildDirectedIssueAckComment(targetAgentName),
-          { agentId: input.targetAgentId },
-        );
-
-        await logActivity(db, {
-          companyId: input.issue.companyId,
-          actorType: "agent",
-          actorId: input.targetAgentId,
-          agentId: input.targetAgentId,
-          runId: null,
-          action: "issue.comment_added",
-          entityType: "issue",
-          entityId: input.issue.id,
-          details: {
-            commentId: ackComment.id,
-            bodySnippet: ackComment.body.slice(0, 120),
-            identifier: input.issue.identifier,
-            issueTitle: input.issue.title,
-            source: "directed_followup_ack",
-          },
-        });
         return {
           ...atlasDispatch.atlasFollowup,
-          ackComment,
+          ackComment: null,
         };
       }
       return atlasDispatch.atlasFollowup;

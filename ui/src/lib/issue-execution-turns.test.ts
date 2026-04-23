@@ -98,11 +98,12 @@ Atlas принял turn и поднимает workspace для этой зада
       ],
     });
 
-    expect(context.turns).toHaveLength(2);
-    expect(context.latestExecutedTurn?.sequence).toBe(2);
-    expect(context.latestExecutedTurn?.request).toBe("Добавь активацию по двойному тапу");
+    expect(context.turns).toHaveLength(1);
+    expect(context.latestExecutedTurn?.sequence).toBe(1);
+    expect(context.latestExecutedTurn?.request).toBe("Сделай fullscreen gallery удобной для телефона и компьютера.");
     expect(context.latestExecutedTurn?.verifierScope).toContain("Project media surface regression");
     expect(context.pendingUserRequests).toEqual([
+      "Добавь активацию по двойному тапу",
       "Добавил активацию по двойному тапу?",
       "норм делай mr",
     ]);
@@ -275,5 +276,49 @@ MR: https://gitlab.kdigital.pro/homio/core/-/merge_requests/273
     expect(messages.some((message) => message.speaker === "user" && message.body === "норм делай mr")).toBe(true);
     expect(messages.some((message) => message.speaker === "assistant" && message.body.includes("Создал MR"))).toBe(true);
     expect(messages.find((message) => message.body.includes("Создал MR"))?.links?.[0]?.url).toContain("/merge_requests/273");
+  });
+
+  it("prefers a real atlas semantic reply over later bridge operational comments for the same follow-up", () => {
+    const issue = makeIssue({
+      identifier: "HOM-957",
+      title: "Добавляем HyperFrames в управление контентом",
+      description: "Сделай HyperFrames рабочим в create social post.",
+      createdAt: new Date("2026-04-20T12:00:00.000Z"),
+    });
+    const comments = [
+      makeComment(`<!-- paperclip-display-author: Atlas Bridge · Reporter -->
+### Reporter
+
+**Итог готов для проверки человеком**
+
+**Коротко:** TURN 16 закрыт.`, "2026-04-23T05:30:00.000Z"),
+      makeComment("[pw-live] чек", "2026-04-23T05:40:54.152Z", true),
+      makeComment("Принял follow-up. Это Atlas Executor.", "2026-04-23T05:40:56.945Z"),
+      makeComment(`<!-- paperclip-display-author: Atlas Bridge · Atlas Executor -->
+### Atlas Executor
+
+**Executor взял задачу в работу**
+
+- Подготовил follow-up к исполнению`, "2026-04-23T05:40:58.819Z"),
+      makeComment(`<!-- atlas-semantic-reply:paperclip-followup-17:semantic-reply:17 -->
+Сейчас занимаюсь HyperFrames и уже чиню high-load поведение очереди.`, "2026-04-23T05:46:29.235Z"),
+    ];
+
+    const context = buildIssueExecutionCommentContext({
+      issue,
+      projectedTurnNumber: 16,
+      comments,
+    });
+
+    const messages = buildIssueNarrativeChatMessages({
+      issue,
+      comments,
+      context,
+    });
+
+    expect(messages.some((message) => message.kind === "system_ack")).toBe(false);
+    expect(messages.some((message) => message.kind === "semantic_reply" && message.body.includes("чиню high-load поведение очереди"))).toBe(true);
+    expect(messages.some((message) => message.kind === "semantic_reply" && message.body.includes("Executor взял задачу в работу"))).toBe(false);
+    expect(messages.at(-1)?.body).toContain("чиню high-load поведение очереди");
   });
 });

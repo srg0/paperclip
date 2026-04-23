@@ -489,14 +489,8 @@ export function IssueDetail() {
     return derivePendingAtlasFollowupStatusFromCommentContext(executionCommentContext);
   }, [executionCommentContext, issueChatLiveSignal, parsedExecutionDocument, pendingAtlasFollowup]);
   const primaryChatMessages = useMemo(() => {
-    const pendingLikeState = pendingFollowupStatus?.state ?? null;
-    const hideProgrammedAck = pendingLikeState === "pending"
-      || pendingLikeState === "accepted"
-      || pendingLikeState === "queued"
-      || pendingLikeState === "running";
-    if (!hideProgrammedAck) return atlasNarrativeChatMessages;
     return atlasNarrativeChatMessages.filter((message) => message.kind !== "system_ack");
-  }, [atlasNarrativeChatMessages, pendingFollowupStatus?.state]);
+  }, [atlasNarrativeChatMessages]);
 
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,

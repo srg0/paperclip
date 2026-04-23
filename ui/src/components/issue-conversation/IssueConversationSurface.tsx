@@ -96,14 +96,13 @@ function followupBody(status: PendingAtlasFollowupStatus) {
   if (status.state === "completed") {
     return status.summary || "Запуск завершён.";
   }
-  if (status.state === "running") {
-    return [status.summary, status.turnLabel].filter(Boolean).join(" · ") || "Запуск идёт.";
-  }
-  if (status.state === "queued") {
-    return [status.summary, status.turnLabel].filter(Boolean).join(" · ") || "Запуск поставлен в очередь.";
-  }
-  if (status.state === "accepted") {
-    return [status.summary, status.turnLabel].filter(Boolean).join(" · ") || "Atlas принял follow-up.";
+  if (
+    status.state === "pending"
+    || status.state === "accepted"
+    || status.state === "queued"
+    || status.state === "running"
+  ) {
+    return null;
   }
   return [status.summary, status.turnLabel].filter(Boolean).join(" · ") || "Жду следующий update.";
 }
@@ -132,6 +131,7 @@ function ThinkingDots() {
 
 function LiveStatusCard({ status }: { status: PendingAtlasFollowupStatus }) {
   const activity = statusShowsActivity(status.state);
+  const body = followupBody(status);
   return (
     <article
       data-testid="issue-pending-message"
@@ -146,7 +146,9 @@ function LiveStatusCard({ status }: { status: PendingAtlasFollowupStatus }) {
           <span className="text-[11px] text-muted-foreground">{status.turnLabel}</span>
         ) : null}
       </div>
-      <div className="mt-2 text-[15px] leading-7 text-foreground">{followupBody(status)}</div>
+      {body ? (
+        <div className="mt-2 text-[15px] leading-7 text-foreground">{body}</div>
+      ) : null}
       {status.detail && status.detail !== status.summary ? (
         <div className="mt-2 text-sm leading-6 text-muted-foreground">{status.detail}</div>
       ) : null}

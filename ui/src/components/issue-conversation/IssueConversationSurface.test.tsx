@@ -117,7 +117,8 @@ describe("IssueConversationSurface", () => {
     expect(status).not.toBeNull();
     expect(status?.getAttribute("data-state")).toBe("running");
     expect(container.textContent).toContain("TURN 10");
-    expect(container.textContent).toContain("Atlas Executor");
+    expect(container.textContent).not.toContain("Atlas Executor");
+    expect(container.textContent).toContain("TURN 10 attached");
     expect(container.querySelectorAll('[data-testid="issue-pending-dots"]').length).toBe(1);
     expect(container.querySelectorAll('[data-testid="issue-live-feed-item"]').length).toBe(0);
     expect(container.querySelectorAll('[data-testid="issue-system-ack"]').length).toBe(0);

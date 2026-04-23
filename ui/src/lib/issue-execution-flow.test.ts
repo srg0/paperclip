@@ -193,7 +193,7 @@ describe("buildPendingAtlasFollowupStatus", () => {
     });
 
     expect(status.state).toBe("pending");
-    expect(status.title).toBe("Starting");
+    expect(status.title).toBe("Thinking");
     expect(status.detail).toBeNull();
   });
 
@@ -370,7 +370,7 @@ describe("derivePendingAtlasFollowupStatusFromCommentContext", () => {
 
     expect(status).not.toBeNull();
     expect(status?.state).toBe("pending");
-    expect(status?.title).toBe("Waiting");
+    expect(status?.title).toBe("Thinking");
     expect(status?.summary).toBe("Atlas Executor");
     expect(status?.turnLabel).toBe("TURN 5");
   });

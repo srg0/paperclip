@@ -686,15 +686,7 @@ describe("issue comment reopen routes", () => {
         reason: "issue_commented",
       }),
     );
-    expect(mockIssueService.addComment).toHaveBeenCalledTimes(2);
-    expect(mockIssueService.addComment).toHaveBeenNthCalledWith(
-      2,
-      "11111111-1111-4111-8111-111111111111",
-      expect.stringContaining("Принял follow-up. Это Atlas Executor."),
-      expect.objectContaining({
-        agentId: "22222222-2222-4222-8222-222222222222",
-      }),
-    );
+    expect(mockIssueService.addComment).toHaveBeenCalledTimes(1);
   });
 
   it("interrupts legacy issue-scoped runs before routing reassigned comments", async () => {
@@ -791,6 +783,7 @@ describe("issue comment reopen routes", () => {
       requestType: "directed_agent",
     });
     expect(res.body.interruptedRunId).toBe("run-2");
+    expect(mockIssueService.addComment).toHaveBeenCalledTimes(1);
     expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-2");
     expect(mockWorkerManager.call).toHaveBeenCalledWith(
       "plugin-1",
