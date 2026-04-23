@@ -492,13 +492,6 @@ export function issueRoutes(
     return { project, goal: null };
   }
 
-  function buildDirectedIssueAckComment(targetAgentName: string) {
-    return [
-      `Принял follow-up. Это ${targetAgentName}.`,
-      "Сейчас запускаю новый turn и вернусь сюда с живым статусом queued/running либо с явным blocker.",
-    ].join("\n\n");
-  }
-
   async function dispatchAtlasBridgeFollowupFromComment(input: {
     req: Request;
     issue: {
@@ -767,30 +760,6 @@ export function issueRoutes(
         },
       });
 
-      const ackComment = await svc.addComment(
-        input.issue.id,
-        buildDirectedIssueAckComment(targetAgentName),
-        { agentId: input.targetAgentId },
-      );
-
-      await logActivity(db, {
-        companyId: input.issue.companyId,
-        actorType: "agent",
-        actorId: input.targetAgentId,
-        agentId: input.targetAgentId,
-        runId: null,
-        action: "issue.comment_added",
-        entityType: "issue",
-        entityId: input.issue.id,
-        details: {
-          commentId: ackComment.id,
-          bodySnippet: ackComment.body.slice(0, 120),
-          identifier: input.issue.identifier,
-          issueTitle: input.issue.title,
-          source: "directed_followup_ack",
-        },
-      });
-
       await logActivity(db, {
         companyId: input.issue.companyId,
         actorType: input.actor.actorType,
@@ -816,7 +785,7 @@ export function issueRoutes(
         detail: null,
         turnNumber: null,
         turnLabel: null,
-        ackComment,
+        ackComment: null,
       };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);

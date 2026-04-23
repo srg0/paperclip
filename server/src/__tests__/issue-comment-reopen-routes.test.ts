@@ -811,6 +811,64 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("does not persist a canned ack comment for directed non-Atlas follow-ups", async () => {
+    const issue = {
+      ...makeIssue("todo"),
+      executionRunId: "run-3",
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-3",
+      companyId: "company-1",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      status: "running",
+      contextSnapshot: { issueId: issue.id },
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-3",
+      companyId: "company-1",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      status: "cancelled",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({
+        body: "Собери краткий анализ и вернись в этот тред.",
+        commentTargetAgentId: "33333333-3333-4333-8333-333333333333",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.atlasFollowup).toMatchObject({
+      status: "accepted",
+      requestType: "directed_agent",
+      detail: null,
+    });
+    expect(res.body.ackComment ?? null).toBeNull();
+    expect(mockIssueService.addComment).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      expect.objectContaining({
+        reason: "issue_commented",
+        contextSnapshot: expect.objectContaining({
+          issueId: issue.id,
+          wakeCommentId: "comment-1",
+          source: "issue.comment.directed",
+          directedCommentTargetId: "33333333-3333-4333-8333-333333333333",
+        }),
+      }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.comment_added",
+        details: expect.objectContaining({
+          source: "directed_followup_ack",
+        }),
+      }),
+    );
+  });
+
   it("returns a blocked directed-agent follow-up when the bridge dispatch is rejected", async () => {
     const issue = {
       ...makeIssue("todo"),
