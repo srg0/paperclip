@@ -79,7 +79,7 @@ describe("IssueConversationSurface", () => {
     });
   });
 
-  it("renders one animated pending card and does not mix live feed into the main thread", () => {
+  it("collapses active pending state into a compact indicator once a semantic reply is already visible", () => {
     const root = createRoot(container);
 
     act(() => {
@@ -113,12 +113,12 @@ describe("IssueConversationSurface", () => {
       );
     });
 
-    const status = container.querySelector('[data-testid="issue-pending-message"]');
+    const status = container.querySelector('[data-testid="issue-pending-indicator"]');
     expect(status).not.toBeNull();
     expect(status?.getAttribute("data-state")).toBe("running");
+    expect(container.querySelector('[data-testid="issue-pending-message"]')).toBeNull();
     expect(container.textContent).toContain("TURN 10");
-    expect(container.textContent).not.toContain("Atlas Executor");
-    expect(container.textContent).toContain("TURN 10 attached");
+    expect(container.textContent).not.toContain("TURN 10 attached");
     expect(container.querySelectorAll('[data-testid="issue-pending-dots"]').length).toBe(1);
     expect(container.querySelectorAll('[data-testid="issue-live-feed-item"]').length).toBe(0);
     expect(container.querySelectorAll('[data-testid="issue-system-ack"]').length).toBe(0);

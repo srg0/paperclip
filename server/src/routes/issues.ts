@@ -626,9 +626,7 @@ export function issueRoutes(
         atlasFollowup: {
           status: "accepted",
           requestType: input.requestType,
-          detail: input.requestType === "directed_agent" && input.targetAgentName
-            ? `${input.targetAgentName} принял directed follow-up и уже запустил прямой Atlas turn.`
-            : "Atlas принял новый follow-up и должен ответить в этом issue thread.",
+          detail: null,
           turnNumber: nextTurn,
           turnLabel: nextTurnLabel,
         },
@@ -815,7 +813,7 @@ export function issueRoutes(
       return {
         status: "accepted",
         requestType: "directed_agent",
-        detail: `${targetAgentName} принял directed follow-up. Ждём queued/running сигнал и ответ в этом issue chat.`,
+        detail: null,
         turnNumber: null,
         turnLabel: null,
         ackComment,

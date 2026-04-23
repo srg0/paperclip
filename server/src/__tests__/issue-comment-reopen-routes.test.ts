@@ -781,6 +781,7 @@ describe("issue comment reopen routes", () => {
     expect(res.body.atlasFollowup).toMatchObject({
       status: "accepted",
       requestType: "directed_agent",
+      detail: null,
     });
     expect(res.body.interruptedRunId).toBe("run-2");
     expect(mockIssueService.addComment).toHaveBeenCalledTimes(1);

@@ -132,6 +132,19 @@ function ThinkingDots() {
 function LiveStatusCard({ status }: { status: PendingAtlasFollowupStatus }) {
   const activity = statusShowsActivity(status.state);
   const body = followupBody(status);
+  if (activity) {
+    return (
+      <div
+        data-testid="issue-pending-indicator"
+        data-state={status.state}
+        className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/[0.05] px-3 py-1.5 text-sm text-muted-foreground"
+      >
+        <span className="font-medium text-foreground">{status.title}</span>
+        <ThinkingDots />
+        {status.turnLabel ? <span>{status.turnLabel}</span> : null}
+      </div>
+    );
+  }
   return (
     <article
       data-testid="issue-pending-message"
@@ -141,7 +154,6 @@ function LiveStatusCard({ status }: { status: PendingAtlasFollowupStatus }) {
       <div className="flex items-center gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Atlas</span>
         <span className="text-[11px] font-semibold text-foreground">{status.title}</span>
-        {activity ? <ThinkingDots /> : null}
         {status.turnLabel ? (
           <span className="text-[11px] text-muted-foreground">{status.turnLabel}</span>
         ) : null}
@@ -186,9 +198,7 @@ export function IssueConversationSurface({
         {visibleMessages.map((message) => (
           <ChatMessageCard key={message.id} message={message} />
         ))}
-        {pendingFollowupStatus ? (
-          <LiveStatusCard status={pendingFollowupStatus} />
-        ) : null}
+        {pendingFollowupStatus ? <LiveStatusCard status={pendingFollowupStatus} /> : null}
       </div>
     </section>
   );
