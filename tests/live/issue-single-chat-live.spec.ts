@@ -321,20 +321,38 @@ async function expectNoDuplicateOperationalArtifacts(thread: Locator) {
 }
 
 async function waitForSemanticReply(thread: Locator, beforeCount: number) {
+  const semanticBodies = thread.locator('[data-testid="issue-semantic-reply"] [data-testid="issue-chat-message-body"]');
+
   await expect
-    .poll(async () => await thread.getByTestId("issue-semantic-reply").count(), {
+    .poll(async () => await semanticBodies.count(), {
       timeout: 30_000,
       intervals: [1_000, 2_000, 2_500],
     })
     .toBeGreaterThan(beforeCount);
 
-  const latestReply = thread.getByTestId("issue-semantic-reply").last();
-  const bodyText = (await latestReply.getByTestId("issue-chat-message-body").innerText()).trim();
-  expect(bodyText.length, `Expected a non-empty semantic reply, got "${bodyText}"`).toBeGreaterThan(10);
-  expect(bodyText).not.toContain("Принял follow-up");
-  expect(bodyText).not.toContain("Executor взял задачу в работу");
-  expect(bodyText).not.toContain("Код и workspace уже обрабатываются на Atlas сервере");
-  return bodyText;
+  const deadline = Date.now() + 30_000;
+  let latestBody = "";
+
+  while (Date.now() < deadline) {
+    const texts = await semanticBodies.evaluateAll((nodes) => nodes
+      .map((node) => node.textContent?.trim() ?? "")
+      .filter(Boolean));
+    const latest = texts.at(-1)?.trim() ?? "";
+    if (
+      latest
+      && latest.length > 10
+      && !latest.includes("Принял follow-up")
+      && !latest.includes("Executor взял задачу в работу")
+      && !latest.includes("Код и workspace уже обрабатываются на Atlas сервере")
+    ) {
+      latestBody = latest;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+
+  expect(latestBody, "Expected a semantic reply body in the primary chat").toBeTruthy();
+  return latestBody;
 }
 
 function withOpsParam(issuePath: string) {
@@ -376,7 +394,7 @@ test.describe("Issue single chat live", () => {
   });
 
   test("submits a directed follow-up and keeps visible truth after reload", async ({ page }) => {
-    const marker = "чек";
+    const marker = `чек ${Date.now().toString(36)}`;
     const realtimeProbe = createRealtimeProbe(page);
 
     await test.step("login and open HOM-957", async () => {

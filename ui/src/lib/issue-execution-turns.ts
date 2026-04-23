@@ -374,6 +374,10 @@ function buildPendingConversationMessages(input: {
         return [];
       }
 
+      if (isProgrammedAtlasAckText(comment.body)) {
+        return [];
+      }
+
       const body = cleanMarkdownText(comment.body);
       if (!body) return [];
 
@@ -583,6 +587,9 @@ export function buildIssueNarrativeChatMessages(input: {
       .find((candidate) => hasAtlasSemanticReplyMarker(candidate.body) && Boolean(cleanMarkdownText(candidate.body)));
 
     if (semanticReply) {
+      if (isProgrammedAtlasAckText(semanticReply.body)) {
+        continue;
+      }
       messages.push({
         id: `comment-${comment.id}-semantic-reply`,
         speaker: "assistant",

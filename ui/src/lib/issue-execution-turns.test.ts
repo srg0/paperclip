@@ -184,7 +184,7 @@ Atlas принял turn и поднимает workspace для этой зада
     expect(context.projectionWarning).toContain("новые user comments");
   });
 
-  it("captures durable assistant replies after the latest executed turn as pending conversation", () => {
+  it("keeps only the pending user request after the latest executed turn when the only assistant update is a programmed ack", () => {
     const context = buildIssueExecutionCommentContext({
       issue: makeIssue({
         identifier: "HOM-957",
@@ -210,7 +210,6 @@ Atlas принял turn и поднимает workspace для этой зада
       body: message.body,
     }))).toEqual([
       { speaker: "user", body: "[pw] ответь коротким ack и начни follow-up" },
-      { speaker: "assistant", body: "Принял follow-up. Это Atlas Executor." },
     ]);
   });
 });
@@ -320,5 +319,41 @@ MR: https://gitlab.kdigital.pro/homio/core/-/merge_requests/273
     expect(messages.some((message) => message.kind === "semantic_reply" && message.body.includes("чиню high-load поведение очереди"))).toBe(true);
     expect(messages.some((message) => message.kind === "semantic_reply" && message.body.includes("Executor взял задачу в работу"))).toBe(false);
     expect(messages.at(-1)?.body).toContain("чиню high-load поведение очереди");
+  });
+
+  it("does not surface a marker-wrapped programmed ack as a semantic reply", () => {
+    const issue = makeIssue({
+      identifier: "HOM-957",
+      title: "Добавляем HyperFrames в управление контентом",
+      description: "Сделай HyperFrames рабочим в create social post.",
+      createdAt: new Date("2026-04-20T12:00:00.000Z"),
+    });
+    const comments = [
+      makeComment(`<!-- paperclip-display-author: Atlas Bridge · Reporter -->
+### Reporter
+
+**Итог готов для проверки человеком**
+
+**Коротко:** TURN 16 закрыт.`, "2026-04-23T05:30:00.000Z"),
+      makeComment("чек", "2026-04-23T05:40:54.152Z", true),
+      makeComment(`<!-- atlas-semantic-reply:paperclip-followup-17:semantic-reply:17:early -->
+Принял follow-up. Это Atlas Executor. Сейчас запускаю новый turn и вернусь сюда с живым статусом queued/running либо с явным blocker.`, "2026-04-23T05:40:56.945Z"),
+    ];
+
+    const context = buildIssueExecutionCommentContext({
+      issue,
+      projectedTurnNumber: 16,
+      comments,
+    });
+
+    const messages = buildIssueNarrativeChatMessages({
+      issue,
+      comments,
+      context,
+    });
+
+    expect(messages.some((message) => message.speaker === "user" && message.body === "чек")).toBe(true);
+    expect(messages.some((message) => message.kind === "semantic_reply")).toBe(false);
+    expect(messages.some((message) => message.body.includes("Принял follow-up. Это Atlas Executor."))).toBe(false);
   });
 });
