@@ -40,6 +40,7 @@ import {
   derivePendingAtlasFollowupStatusFromCommentContext,
   buildPendingAtlasFollowupStatus,
   parseExecutionDocument,
+  type PendingAtlasFollowupStatus,
 } from "../lib/issue-execution-flow";
 import { buildIssueExecutionCommentContext, buildIssueNarrativeChatMessages } from "../lib/issue-execution-turns";
 import { filterIssueTimelineRuns } from "../lib/issue-run-history";
@@ -491,6 +492,31 @@ export function IssueDetail() {
   const primaryChatMessages = useMemo(() => {
     return atlasNarrativeChatMessages.filter((message) => message.kind !== "system_ack");
   }, [atlasNarrativeChatMessages]);
+
+  useEffect(() => {
+    if (!issueId) return;
+    const activeFollowupStates: PendingAtlasFollowupStatus["state"][] = [
+      "pending",
+      "accepted",
+      "queued",
+      "running",
+    ];
+    if (!pendingFollowupStatus || !activeFollowupStates.includes(pendingFollowupStatus.state)) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId) });
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.issues.documents(issueId), "atlas-execution", "detail"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId) });
+    }, 2500);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [issueId, pendingFollowupStatus, queryClient]);
 
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
