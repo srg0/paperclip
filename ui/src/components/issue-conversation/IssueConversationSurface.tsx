@@ -48,7 +48,7 @@ function ChatMessageCard({ message }: { message: IssueNarrativeChatMessage }) {
             {relativeTime(message.createdAt)}
           </span>
         </div>
-        <div className="mt-2 text-[15px] leading-7 text-foreground">{message.body}</div>
+        <div data-testid="issue-chat-message-body" className="mt-2 text-[15px] leading-7 text-foreground">{message.body}</div>
         {message.links?.length ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {message.links.map((link) => (

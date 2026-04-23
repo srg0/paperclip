@@ -329,7 +329,7 @@ async function waitForSemanticReply(thread: Locator, beforeCount: number) {
     .toBeGreaterThan(beforeCount);
 
   const latestReply = thread.getByTestId("issue-semantic-reply").last();
-  const bodyText = (await latestReply.innerText()).trim();
+  const bodyText = (await latestReply.getByTestId("issue-chat-message-body").innerText()).trim();
   expect(bodyText.length, `Expected a non-empty semantic reply, got "${bodyText}"`).toBeGreaterThan(10);
   expect(bodyText).not.toContain("Принял follow-up");
   expect(bodyText).not.toContain("Executor взял задачу в работу");
@@ -433,7 +433,9 @@ test.describe("Issue single chat live", () => {
       })
       .toBeGreaterThanOrEqual(userMarkerCountBeforeSubmit + 1);
     await expectNoDuplicateOperationalArtifacts(reloadedThread);
-    await expect(reloadedThread.getByTestId("issue-semantic-reply").getByText(semanticReplyText).last()).toBeVisible({ timeout: 15_000 });
+    await expect(
+      reloadedThread.getByTestId("issue-chat-message-body").getByText(semanticReplyText, { exact: true }).last(),
+    ).toBeVisible({ timeout: 15_000 });
     expectNoRealtimeSocketErrors(realtimeProbe, "after reload");
 
     await saveScreenshot(page, "issue-single-chat-followup-reloaded.png");
