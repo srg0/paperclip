@@ -356,4 +356,33 @@ MR: https://gitlab.kdigital.pro/homio/core/-/merge_requests/273
     expect(messages.some((message) => message.kind === "semantic_reply")).toBe(false);
     expect(messages.some((message) => message.body.includes("Принял follow-up. Это Atlas Executor."))).toBe(false);
   });
+
+  it("does not surface plain assistant comments without semantic markers in primary chat", () => {
+    const issue = makeIssue({
+      identifier: "HOM-957",
+      title: "Добавляем HyperFrames в управление контентом",
+      description: "Сделай HyperFrames рабочим в create social post.",
+      createdAt: new Date("2026-04-20T12:00:00.000Z"),
+    });
+    const comments = [
+      makeComment("чек", "2026-04-23T05:40:54.152Z", true),
+      makeComment("Я здесь и уже продолжаю этот turn.", "2026-04-23T05:40:56.945Z"),
+    ];
+
+    const context = buildIssueExecutionCommentContext({
+      issue,
+      projectedTurnNumber: 16,
+      comments,
+    });
+
+    const messages = buildIssueNarrativeChatMessages({
+      issue,
+      comments,
+      context,
+    });
+
+    expect(messages.some((message) => message.speaker === "user" && message.body === "чек")).toBe(true);
+    expect(messages.some((message) => message.kind === "semantic_reply")).toBe(false);
+    expect(messages.some((message) => message.body.includes("Я здесь и уже продолжаю этот turn."))).toBe(false);
+  });
 });

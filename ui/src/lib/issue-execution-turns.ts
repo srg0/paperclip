@@ -601,23 +601,6 @@ export function buildIssueNarrativeChatMessages(input: {
       continue;
     }
 
-    const agentReply = [...replyCandidates]
-      .reverse()
-      .find((candidate) => !parseMergeRequestComment(candidate.body) && !parseBridgeComment(candidate.body) && Boolean(cleanMarkdownText(candidate.body)));
-
-    if (agentReply) {
-      if (isProgrammedAtlasAckText(agentReply.body)) {
-        continue;
-      }
-      messages.push({
-        id: `comment-${comment.id}-agent-reply`,
-        speaker: "assistant",
-        createdAt: normalizeTimestamp(agentReply.createdAt),
-        body: cleanMarkdownText(agentReply.body),
-        tone: "working",
-        kind: "semantic_reply",
-      });
-    }
   }
 
   return messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
