@@ -49,11 +49,14 @@ describe("IssueConversationSurface", () => {
 
     expect(container.querySelector('[data-testid="issue-conversation-surface"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="issue-chat-thread"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="issue-followup-status"]')).toBeNull();
+    expect(container.querySelector('[data-testid="issue-pending-message"]')).toBeNull();
     expect(container.textContent).not.toContain("Chat messages will appear here once Atlas replies or the next turn starts.");
     expect(container.textContent).toContain("Проверь, где мы сейчас.");
     expect(container.textContent).toContain("Принял. Проверяю текущий статус и отвечу сюда же.");
     expect(container.textContent).toContain("Открыть стенд");
+    expect(container.querySelectorAll('[data-testid="issue-user-message"]').length).toBe(1);
+    expect(container.querySelectorAll('[data-testid="issue-semantic-reply"]').length).toBe(1);
+    expect(container.querySelectorAll('[data-testid="issue-system-ack"]').length).toBe(0);
 
     act(() => {
       root.unmount();
@@ -68,7 +71,7 @@ describe("IssueConversationSurface", () => {
     });
 
     expect(container.querySelector('[data-testid="issue-chat-thread"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="issue-followup-status"]')).toBeNull();
+    expect(container.querySelector('[data-testid="issue-pending-message"]')).toBeNull();
     expect(container.textContent).not.toContain("Chat messages will appear here once Atlas replies or the next turn starts.");
 
     act(() => {
@@ -76,7 +79,7 @@ describe("IssueConversationSurface", () => {
     });
   });
 
-  it("keeps follow-up status visible and renders live feed in the main thread", () => {
+  it("renders one animated pending card and does not mix live feed into the main thread", () => {
     const root = createRoot(container);
 
     act(() => {
@@ -93,9 +96,10 @@ describe("IssueConversationSurface", () => {
             {
               id: "msg-assistant-1",
               speaker: "assistant",
-              body: "Принял follow-up.",
+              body: "Я уже в работе и скоро отвечу по существу.",
               createdAt: "2026-04-22T07:20:02.000Z",
               tone: "working",
+              kind: "semantic_reply",
             },
           ]}
           pendingFollowupStatus={{
@@ -105,25 +109,18 @@ describe("IssueConversationSurface", () => {
             detail: "TURN 10 attached",
             turnLabel: "TURN 10",
           }}
-          liveFeed={[
-            {
-              key: "feed-1",
-              createdAt: "2026-04-22T07:20:04.000Z",
-              title: "Atlas Executor: live output",
-              summary: "Executor взял задачу в работу",
-              tone: "working",
-            },
-          ]}
         />,
       );
     });
 
-    const status = container.querySelector('[data-testid="issue-followup-status"]');
+    const status = container.querySelector('[data-testid="issue-pending-message"]');
     expect(status).not.toBeNull();
     expect(status?.getAttribute("data-state")).toBe("running");
     expect(container.textContent).toContain("TURN 10");
-    expect(container.textContent).toContain("Executor взял задачу в работу");
-    expect(container.querySelectorAll('[data-testid="issue-live-feed-item"]').length).toBe(1);
+    expect(container.textContent).toContain("Atlas Executor");
+    expect(container.querySelectorAll('[data-testid="issue-pending-dots"]').length).toBe(1);
+    expect(container.querySelectorAll('[data-testid="issue-live-feed-item"]').length).toBe(0);
+    expect(container.querySelectorAll('[data-testid="issue-system-ack"]').length).toBe(0);
 
     act(() => {
       root.unmount();

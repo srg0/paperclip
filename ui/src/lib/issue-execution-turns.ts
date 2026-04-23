@@ -41,6 +41,7 @@ export interface IssueNarrativeChatMessage {
   body: string;
   createdAt: string;
   tone: "info" | "working" | "success" | "warn" | "error";
+  kind?: "user" | "system_ack" | "semantic_reply" | "turn_summary";
   links?: IssueNarrativeChatLink[];
 }
 
@@ -156,6 +157,14 @@ function parseMergeRequestComment(body: string): ParsedMergeRequestComment | nul
     url: urlMatch[1].trim(),
     branch: branchMatch?.[1]?.trim() || null,
   };
+}
+
+export function isProgrammedAtlasAckText(body: string | null | undefined): boolean {
+  const normalized = cleanMarkdownText(body ?? "");
+  if (!normalized) return false;
+  return normalized.startsWith("Принял follow-up. Это ")
+    || normalized === "Принял follow-up."
+    || normalized.startsWith("Принял follow-up. Atlas Executor.");
 }
 
 function isPlainUserComment(comment: Pick<IssueComment, "authorAgentId" | "authorUserId" | "body">): boolean {
@@ -544,13 +553,14 @@ export function buildIssueNarrativeChatMessages(input: {
   const firstTurn = context.turns[0] ?? null;
 
   if (initialRequest) {
-    messages.push({
-      id: "initial-request",
-      speaker: "user",
-      body: initialRequest,
-      createdAt: normalizeTimestamp(input.issue.createdAt),
-      tone: "info",
-    });
+      messages.push({
+        id: "initial-request",
+        speaker: "user",
+        body: initialRequest,
+        createdAt: normalizeTimestamp(input.issue.createdAt),
+        tone: "info",
+        kind: "user",
+      });
   }
 
   for (const [index, turn] of context.turns.entries()) {
@@ -568,6 +578,7 @@ export function buildIssueNarrativeChatMessages(input: {
         body: turn.request,
         createdAt: normalizeTimestamp(matchedComment?.createdAt ?? turn.startedAt),
         tone: "info",
+        kind: "user",
       });
     }
 
@@ -577,6 +588,7 @@ export function buildIssueNarrativeChatMessages(input: {
         id: `turn-${turn.sequence}-reply`,
         speaker: "assistant",
         createdAt: normalizeTimestamp(turn.settledAt ?? turn.startedAt),
+        kind: "turn_summary",
         ...assistantReply,
       });
     }
@@ -593,6 +605,7 @@ export function buildIssueNarrativeChatMessages(input: {
       body: request,
       createdAt: normalizeTimestamp(comment.createdAt),
       tone: "info",
+      kind: "user",
     });
 
     const nextUserCommentAt = plainUserComments[index + 1]?.createdAt
@@ -617,6 +630,7 @@ export function buildIssueNarrativeChatMessages(input: {
           : "Создал MR для этой задачи.",
         createdAt: normalizeTimestamp(mergeRequestComment.candidate.createdAt),
         tone: "success",
+        kind: "semantic_reply",
         links: [{ label: "Открыть MR", url: mergeRequestComment.mr.url }],
       });
       continue;
@@ -637,6 +651,7 @@ export function buildIssueNarrativeChatMessages(input: {
         id: `comment-${comment.id}-reply`,
         speaker: "assistant",
         createdAt: bridgeReply.createdAt,
+        kind: isProgrammedAtlasAckText(bridgeReply.reply.body) ? "system_ack" : "semantic_reply",
         ...bridgeReply.reply,
       });
       continue;
@@ -653,6 +668,7 @@ export function buildIssueNarrativeChatMessages(input: {
         createdAt: normalizeTimestamp(agentReply.createdAt),
         body: cleanMarkdownText(agentReply.body),
         tone: "working",
+        kind: isProgrammedAtlasAckText(agentReply.body) ? "system_ack" : "semantic_reply",
       });
     }
   }

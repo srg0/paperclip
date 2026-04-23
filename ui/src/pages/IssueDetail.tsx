@@ -456,7 +456,7 @@ export function IssueDetail() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
-  const { signal: issueChatLiveSignal, feed: issueChatLiveFeed } = useIssueChatLiveTransport({
+  const { signal: issueChatLiveSignal } = useIssueChatLiveTransport({
     companyId: resolvedCompanyId,
     issue: issue ? { id: issue.id, identifier: issue.identifier ?? null } : null,
     agents: agents ?? null,
@@ -488,6 +488,15 @@ export function IssueDetail() {
     }
     return derivePendingAtlasFollowupStatusFromCommentContext(executionCommentContext);
   }, [executionCommentContext, issueChatLiveSignal, parsedExecutionDocument, pendingAtlasFollowup]);
+  const primaryChatMessages = useMemo(() => {
+    const pendingLikeState = pendingFollowupStatus?.state ?? null;
+    const hideProgrammedAck = pendingLikeState === "pending"
+      || pendingLikeState === "accepted"
+      || pendingLikeState === "queued"
+      || pendingLikeState === "running";
+    if (!hideProgrammedAck) return atlasNarrativeChatMessages;
+    return atlasNarrativeChatMessages.filter((message) => message.kind !== "system_ack");
+  }, [atlasNarrativeChatMessages, pendingFollowupStatus?.state]);
 
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -1380,8 +1389,7 @@ export function IssueDetail() {
       <div className="space-y-4" data-testid="issue-primary-flow">
         <IssueConversationSurface
           pendingFollowupStatus={pendingFollowupStatus}
-          liveFeed={issueChatLiveFeed}
-          chatMessages={atlasNarrativeChatMessages}
+          chatMessages={primaryChatMessages}
         />
 
         <IssueConversationComposer

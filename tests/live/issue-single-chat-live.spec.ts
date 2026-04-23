@@ -181,7 +181,7 @@ async function collectDomGateSnapshot(page: Page): Promise<DomGateSnapshot> {
         issueConversationEditor: has('[data-testid="issue-conversation-editor"]'),
         issueDebugPanelsButton: has('[data-testid="issue-debug-panels-button"]'),
         issueDebugPanelsSheet: has('[data-testid="issue-debug-panels-sheet"]'),
-        issueFollowupStatus: has('[data-testid="issue-followup-status"]'),
+        issueFollowupStatus: has('[data-testid="issue-pending-message"]'),
         issueChatThread: has('[data-testid="issue-chat-thread"]'),
       },
       primaryFlowShellLeaks: {
@@ -285,19 +285,31 @@ async function expectSingleChatPrimaryFlow(page: Page, options?: { debugSheetVis
 async function waitForVisibleFollowupSignal(thread: Locator) {
   await expect.poll(async () => {
     const followupState = await thread
-      .getByTestId("issue-followup-status")
+      .getByTestId("issue-pending-message")
       .getAttribute("data-state")
       .catch(() => null);
-    const hasAck = await thread.getByText(/Принял follow-up/i).first().isVisible().catch(() => false);
-    if (hasAck) return "ack";
     if (followupState && /accepted|queued|running|blocked|completed|failed/.test(followupState)) return followupState;
     return "none";
-  }, { timeout: 15_000 }).toMatch(/ack|accepted|queued|running|blocked|completed|failed/);
+  }, { timeout: 15_000 }).toMatch(/accepted|queued|running|blocked|completed|failed/);
 }
 
-async function expectAckAndFollowupStatus(thread: Locator) {
-  await expect(thread.getByText(/Принял follow-up/i).first()).toBeVisible({ timeout: 15_000 });
-  await expect(thread.getByTestId("issue-followup-status")).toBeVisible({ timeout: 15_000 });
+async function expectSinglePendingTruth(thread: Locator) {
+  await expect(thread.getByTestId("issue-pending-message")).toBeVisible({ timeout: 15_000 });
+  await expect(thread.getByTestId("issue-system-ack")).toHaveCount(0);
+}
+
+async function waitForSemanticReply(thread: Locator, beforeCount: number) {
+  await expect
+    .poll(async () => await thread.getByTestId("issue-semantic-reply").count(), {
+      timeout: 90_000,
+      intervals: [1_000, 2_000, 3_000],
+    })
+    .toBeGreaterThan(beforeCount);
+
+  const latestReply = thread.getByTestId("issue-semantic-reply").last();
+  const bodyText = (await latestReply.innerText()).trim();
+  expect(bodyText.length, `Expected a non-empty semantic reply, got "${bodyText}"`).toBeGreaterThan(10);
+  return bodyText;
 }
 
 function withOpsParam(issuePath: string) {
@@ -339,7 +351,7 @@ test.describe("Issue single chat live", () => {
   });
 
   test("submits a directed follow-up and keeps visible truth after reload", async ({ page }) => {
-    const marker = `[pw-live ${new Date().toISOString()}] Ответь сюда же коротким ack и начни новый follow-up turn.`;
+    const marker = `[pw-live ${new Date().toISOString()}] Коротко ответь в этот же чат, что ты делаешь сейчас, затем продолжай follow-up turn.`;
     const realtimeProbe = createRealtimeProbe(page);
 
     await test.step("login and open HOM-957", async () => {
@@ -353,6 +365,7 @@ test.describe("Issue single chat live", () => {
     });
 
     const thread = page.getByTestId("issue-chat-thread");
+    const semanticReplyCountBeforeSubmit = await thread.getByTestId("issue-semantic-reply").count();
     const editor = page.getByTestId("issue-conversation-editor").locator('[contenteditable="true"]').first();
     await editor.click();
     await editor.pressSequentially(marker);
@@ -366,9 +379,10 @@ test.describe("Issue single chat live", () => {
     const submitResponse = await submitResponsePromise;
     expect(submitResponse.ok()).toBe(true);
 
-    await expect(thread.getByText(marker).first()).toBeVisible({ timeout: 10_000 });
+    await expect(thread.getByTestId("issue-user-message").getByText(marker).first()).toBeVisible({ timeout: 10_000 });
     await waitForVisibleFollowupSignal(thread);
-    await expectAckAndFollowupStatus(thread);
+    await expectSinglePendingTruth(thread);
+    const semanticReplyText = await waitForSemanticReply(thread, semanticReplyCountBeforeSubmit);
     expectNoRealtimeSocketErrors(realtimeProbe, "follow-up submit");
 
     await saveScreenshot(page, "issue-single-chat-followup-submitted.png");
@@ -383,9 +397,10 @@ test.describe("Issue single chat live", () => {
     });
 
     const reloadedThread = page.getByTestId("issue-chat-thread");
-    await expect(reloadedThread.getByText(marker).first()).toBeVisible({ timeout: 15_000 });
+    await expect(reloadedThread.getByTestId("issue-user-message").getByText(marker).first()).toBeVisible({ timeout: 15_000 });
     await waitForVisibleFollowupSignal(reloadedThread);
-    await expectAckAndFollowupStatus(reloadedThread);
+    await expectSinglePendingTruth(reloadedThread);
+    await expect(reloadedThread.getByTestId("issue-semantic-reply").getByText(semanticReplyText).last()).toBeVisible({ timeout: 15_000 });
     expectNoRealtimeSocketErrors(realtimeProbe, "after reload");
 
     await saveScreenshot(page, "issue-single-chat-followup-reloaded.png");

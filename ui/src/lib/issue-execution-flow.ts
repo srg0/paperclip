@@ -382,7 +382,7 @@ export function buildPendingAtlasFollowupStatus(input: {
   if (!hasFreshProjection && !hasNewerTurn) {
     return {
       state: dispatch?.status === "accepted" ? "accepted" : "pending",
-      title: dispatch?.status === "accepted" ? "Thinking" : "Starting",
+      title: "Thinking",
       summary: dispatch?.requestType === "directed_agent"
         ? "Atlas Executor"
         : turnLabel ?? "Atlas",
@@ -451,7 +451,7 @@ export function derivePendingAtlasFollowupStatusFromCommentContext(
   const nextTurnNumber = (context.latestExecutedTurn?.sequence ?? 0) + 1;
   return {
     state: hasAssistantAck ? "accepted" : "pending",
-    title: hasAssistantAck ? "Thinking" : "Waiting",
+    title: "Thinking",
     summary: "Atlas Executor",
     detail: null,
     turnLabel: nextTurnNumber > 0 ? `TURN ${nextTurnNumber}` : null,
