@@ -599,13 +599,16 @@ export function buildIssueNarrativeChatMessages(input: {
       .find((candidate) => !parseMergeRequestComment(candidate.body) && !parseBridgeComment(candidate.body) && Boolean(cleanMarkdownText(candidate.body)));
 
     if (agentReply) {
+      if (isProgrammedAtlasAckText(agentReply.body)) {
+        continue;
+      }
       messages.push({
         id: `comment-${comment.id}-agent-reply`,
         speaker: "assistant",
         createdAt: normalizeTimestamp(agentReply.createdAt),
         body: cleanMarkdownText(agentReply.body),
         tone: "working",
-        kind: isProgrammedAtlasAckText(agentReply.body) ? "system_ack" : "semantic_reply",
+        kind: "semantic_reply",
       });
     }
   }

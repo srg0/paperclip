@@ -123,7 +123,7 @@ function isTransientIngress503(value: unknown): boolean {
   return /503 Service Unavailable|No server is available to handle this request/i.test(text);
 }
 
-async function gotoWithTransient503Retry(page: Page, url: string, attempts = 3) {
+async function gotoWithTransient503Retry(page: Page, url: string, attempts = 6) {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -139,7 +139,7 @@ async function gotoWithTransient503Retry(page: Page, url: string, attempts = 3) 
     } catch (error) {
       lastError = error;
       if (attempt < attempts) {
-        await page.waitForTimeout(1_500 * attempt);
+        await page.waitForTimeout(2_500 * attempt);
       }
     }
   }
@@ -147,7 +147,7 @@ async function gotoWithTransient503Retry(page: Page, url: string, attempts = 3) 
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-async function readSessionSnapshotWithRetry(page: Page, attempts = 3): Promise<SessionSnapshot> {
+async function readSessionSnapshotWithRetry(page: Page, attempts = 6): Promise<SessionSnapshot> {
   let lastSnapshot: SessionSnapshot | null = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -157,7 +157,7 @@ async function readSessionSnapshotWithRetry(page: Page, attempts = 3): Promise<S
       return snapshot;
     }
     if (attempt < attempts) {
-      await page.waitForTimeout(1_000 * attempt);
+      await page.waitForTimeout(2_000 * attempt);
     }
   }
 
@@ -315,19 +315,25 @@ async function expectNoDuplicateOperationalArtifacts(thread: Locator) {
   const indicatorCount = await thread.getByTestId("issue-pending-indicator").count();
   const messageCount = await thread.getByTestId("issue-pending-message").count();
   expect(indicatorCount + messageCount).toBeLessThanOrEqual(1);
+  await expect(thread.getByText("Код и workspace уже обрабатываются на Atlas сервере.")).toHaveCount(0);
+  await expect(thread.getByText("Executor взял задачу в работу")).toHaveCount(0);
+  await expect(thread.getByText("Принял follow-up. Это Atlas Executor.")).toHaveCount(0);
 }
 
 async function waitForSemanticReply(thread: Locator, beforeCount: number) {
   await expect
     .poll(async () => await thread.getByTestId("issue-semantic-reply").count(), {
-      timeout: 90_000,
-      intervals: [1_000, 2_000, 3_000],
+      timeout: 30_000,
+      intervals: [1_000, 2_000, 2_500],
     })
     .toBeGreaterThan(beforeCount);
 
   const latestReply = thread.getByTestId("issue-semantic-reply").last();
   const bodyText = (await latestReply.innerText()).trim();
   expect(bodyText.length, `Expected a non-empty semantic reply, got "${bodyText}"`).toBeGreaterThan(10);
+  expect(bodyText).not.toContain("Принял follow-up");
+  expect(bodyText).not.toContain("Executor взял задачу в работу");
+  expect(bodyText).not.toContain("Код и workspace уже обрабатываются на Atlas сервере");
   return bodyText;
 }
 
@@ -370,7 +376,7 @@ test.describe("Issue single chat live", () => {
   });
 
   test("submits a directed follow-up and keeps visible truth after reload", async ({ page }) => {
-    const marker = `[pw-live ${new Date().toISOString()}] Коротко ответь в этот же чат, что ты делаешь сейчас, затем продолжай follow-up turn.`;
+    const marker = "чек";
     const realtimeProbe = createRealtimeProbe(page);
 
     await test.step("login and open HOM-957", async () => {
@@ -385,6 +391,7 @@ test.describe("Issue single chat live", () => {
 
     const thread = page.getByTestId("issue-chat-thread");
     const semanticReplyCountBeforeSubmit = await thread.getByTestId("issue-semantic-reply").count();
+    const userMarkerCountBeforeSubmit = await thread.getByTestId("issue-user-message").filter({ hasText: marker }).count();
     const editor = page.getByTestId("issue-conversation-editor").locator('[contenteditable="true"]').first();
     await editor.click();
     await editor.pressSequentially(marker);
@@ -398,7 +405,11 @@ test.describe("Issue single chat live", () => {
     const submitResponse = await submitResponsePromise;
     expect(submitResponse.ok()).toBe(true);
 
-    await expect(thread.getByTestId("issue-user-message").filter({ hasText: marker })).toHaveCount(1, { timeout: 10_000 });
+    await expect
+      .poll(async () => await thread.getByTestId("issue-user-message").filter({ hasText: marker }).count(), {
+        timeout: 10_000,
+      })
+      .toBe(userMarkerCountBeforeSubmit + 1);
     await waitForVisibleFollowupSignal(thread);
     await expectSinglePendingTruth(thread);
     const semanticReplyText = await waitForSemanticReply(thread, semanticReplyCountBeforeSubmit);
@@ -416,7 +427,11 @@ test.describe("Issue single chat live", () => {
     });
 
     const reloadedThread = page.getByTestId("issue-chat-thread");
-    await expect(reloadedThread.getByTestId("issue-user-message").filter({ hasText: marker })).toHaveCount(1, { timeout: 15_000 });
+    await expect
+      .poll(async () => await reloadedThread.getByTestId("issue-user-message").filter({ hasText: marker }).count(), {
+        timeout: 15_000,
+      })
+      .toBeGreaterThanOrEqual(userMarkerCountBeforeSubmit + 1);
     await expectNoDuplicateOperationalArtifacts(reloadedThread);
     await expect(reloadedThread.getByTestId("issue-semantic-reply").getByText(semanticReplyText).last()).toBeVisible({ timeout: 15_000 });
     expectNoRealtimeSocketErrors(realtimeProbe, "after reload");

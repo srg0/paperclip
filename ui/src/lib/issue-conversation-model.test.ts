@@ -95,12 +95,12 @@ describe("buildIssueConversationModel", () => {
     expect(pendingTurn?.turnLabel).toBe("TURN 3");
     expect(pendingTurn?.request).toBe("чек");
     expect(pendingTurn?.status).toBe("running");
-    expect(pendingTurn?.summary).toContain("TURN 3");
+    expect(pendingTurn?.summary).not.toContain("TURN 3");
     expect(pendingTurn?.summary).toContain("Atlas Executor");
     expect(pendingTurn?.summary).toContain("slot ai01");
     expect(pendingTurn?.nextAction).toBeNull();
     const runningBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Running");
-    expect(runningBundle?.summary).toContain("TURN 3");
+    expect(runningBundle?.summary).toBe("Atlas Executor · slot ai01");
     expect(runningBundle?.items).toBeUndefined();
   });
 
@@ -116,12 +116,12 @@ describe("buildIssueConversationModel", () => {
     expect(pendingTurn?.turnLabel).toBe("Follow-up");
     expect(pendingTurn?.status).toBe("waiting");
     expect(pendingTurn?.statusLabel).toBe("Waiting");
-    expect(pendingTurn?.summary).toContain("No live run yet");
+    expect(pendingTurn?.summary).toBe("Atlas Executor");
     expect(pendingTurn?.nextAction).toBeNull();
     expect(pendingTurn?.phaseBundles).toEqual([]);
   });
 
-  it("shows the latest durable assistant ack instead of an empty folded placeholder", () => {
+  it("keeps pending follow-up status generic even when a durable assistant ack exists", () => {
     const model = buildIssueConversationModel({
       context: makeContext({
         pendingUserRequests: ["старый follow-up 1", "[pw] короткий follow-up"],
@@ -156,10 +156,11 @@ describe("buildIssueConversationModel", () => {
 
     const pendingTurn = model.turns.at(-1);
     expect(pendingTurn?.request).toBe("[pw] короткий follow-up");
-    expect(pendingTurn?.summary).toContain("Принял follow-up. Это Atlas Executor.");
+    expect(pendingTurn?.summary).toBe("Atlas Executor");
     expect(pendingTurn?.tone).toBe("working");
     const runningBundle = pendingTurn?.phaseBundles.find((bundle) => bundle.label === "Thinking");
-    expect(runningBundle?.items).toEqual(["Принял follow-up. Это Atlas Executor."]);
+    expect(runningBundle?.summary).toBe("Atlas Executor");
+    expect(runningBundle?.items).toBeUndefined();
     expect(pendingTurn?.nextAction).toBeNull();
   });
 });

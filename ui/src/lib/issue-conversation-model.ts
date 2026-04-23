@@ -356,14 +356,12 @@ function buildPendingTurnCards(
       ? "queued"
       : "waiting";
   const liveSummary = [
-    status === "running" ? "Running" : status === "queued" ? "Starting" : "No live run yet",
-    primaryLiveRun?.turnLabel ?? null,
     primaryLiveRun?.agentName ?? null,
     primaryLiveRun?.slotEnv ? `slot ${primaryLiveRun.slotEnv}` : null,
   ]
     .filter(Boolean);
-  const assistantAck = cleanMarkdownText(latestAssistantMessage?.body ?? "");
-  const summaryParts = assistantAck ? [assistantAck] : [...liveSummary];
+  const hasAssistantAck = Boolean(cleanMarkdownText(latestAssistantMessage?.body ?? ""));
+  const summaryText = liveSummary.join(" · ") || "Atlas Executor";
 
   return [{
     id: "pending-turn-current",
@@ -372,20 +370,18 @@ function buildPendingTurnCards(
     request: latestRequest || "Waiting for the newest follow-up request.",
     status,
     statusLabel: statusLabel(status),
-    tone: status === "running" || assistantAck ? "working" : status === "queued" ? "neutral" : "warning",
-    summary: summaryParts.join(" · ") || "Waiting",
+    tone: status === "running" || hasAssistantAck ? "working" : status === "queued" ? "neutral" : "warning",
+    summary: summaryText,
     proofSummary: null,
     nextAction: null,
     proofState: "none",
     artifacts: [],
-    phaseBundles: assistantAck || primaryLiveRun
+    phaseBundles: hasAssistantAck || primaryLiveRun
       ? [{
           id: "pending-run-current",
           label: status === "running" ? "Running" : status === "queued" ? "Starting" : "Thinking",
           status: status === "running" ? "running" : status === "queued" ? "pending" : "running",
-          summary: assistantAck || liveSummary.join(" · ") || "Waiting",
-          itemCount: assistantAck ? 1 : undefined,
-          items: assistantAck ? [assistantAck] : undefined,
+          summary: summaryText,
         }]
       : [],
     updatedAt: null,
