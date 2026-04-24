@@ -66,6 +66,7 @@ import {
   Copy,
   EyeOff,
   Hexagon,
+  LayoutDashboard,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
@@ -1329,9 +1330,27 @@ export function IssueDetail() {
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => setOpsPanelsOpen(true)}
+              title="Task dashboard"
+            >
+              <LayoutDashboard className="h-4 w-4" />
+            </Button>
           </div>
 
           <div className="hidden md:flex items-center md:ml-auto shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 shrink-0"
+              onClick={() => setOpsPanelsOpen(true)}
+              title="Task dashboard"
+            >
+              <LayoutDashboard className="h-3.5 w-3.5" />
+              Dashboard
+            </Button>
             <Button
               variant="ghost"
               size="icon-xs"
@@ -1435,7 +1454,6 @@ export function IssueDetail() {
           }}
           fixedCommentTargetAgentId={atlasPrimaryAgent?.id ?? issue.assigneeAgentId ?? null}
           primaryAgentLabel={atlasPrimaryAgent?.name ?? "Atlas Executor"}
-          simpleMode
           agentMap={agentMap}
           draftKey={`paperclip:issue-comment-draft:${issue.id}`}
           issueStatus={issue.status}
@@ -1445,7 +1463,7 @@ export function IssueDetail() {
       <Sheet open={opsPanelsOpen} onOpenChange={setOpsPanelsOpen}>
         <SheetContent side="right" className="w-full sm:max-w-3xl lg:max-w-[1100px]" data-testid="issue-debug-panels-sheet">
           <SheetHeader>
-            <SheetTitle className="text-sm">Debug panels</SheetTitle>
+            <SheetTitle className="text-sm">Task dashboard</SheetTitle>
           </SheetHeader>
           <ScrollArea className="h-[calc(100vh-96px)] pr-4">
             <div className="space-y-6 py-4">
@@ -1461,13 +1479,13 @@ export function IssueDetail() {
                 <div className="flex flex-wrap items-start justify-between gap-3" data-testid="issue-hidden-debug-summary">
                   <div className="space-y-2">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Hidden Debug
+                      Task Dashboard
                     </p>
                     <h3 className="text-lg font-semibold text-foreground">
-                      Operational panels kept out of the main chat.
+                      Atlas controls and raw execution surfaces.
                     </h3>
                     <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                      The primary route stays single-chat. Open this hidden sheet with <span className="font-mono">?ops=1</span> when you need raw runs, comments, activity or support panels.
+                      The main route stays single-chat. Use this dashboard for slot control, build/sync actions, raw runs, comments, activity and deeper support panels.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1486,6 +1504,32 @@ export function IssueDetail() {
                   </div>
                 </div>
               </div>
+
+              {issuePluginDetailSlots.length > 0 ? (
+                <div className="space-y-3 rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-task-dashboard-panels">
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Task controls</p>
+                    <p className="text-sm text-muted-foreground">
+                      Atlas stand lifecycle, build actions and execution controls stay here so the primary chat can remain compact.
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    {issuePluginDetailSlots.map((slot) => (
+                      <PluginSlotMount
+                        key={slot.id}
+                        slot={slot}
+                        context={{
+                          companyId: issue.companyId,
+                          projectId: issue.projectId ?? null,
+                          entityId: issue.id,
+                          entityType: "issue",
+                        }}
+                        missingBehavior="placeholder"
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               {childIssues.length > 0 ? (
                 <div className="space-y-3 rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-subissues">
@@ -1642,24 +1686,6 @@ export function IssueDetail() {
                     </div>
                   ) : null}
 
-                  {issuePluginDetailSlots.length > 0 ? (
-                    <div className="space-y-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Plugin panels</p>
-                      {issuePluginDetailSlots.map((slot) => (
-                        <PluginSlotMount
-                          key={slot.id}
-                          slot={slot}
-                          context={{
-                            companyId: issue.companyId,
-                            projectId: issue.projectId ?? null,
-                            entityId: issue.id,
-                            entityType: "issue",
-                          }}
-                          missingBehavior="placeholder"
-                        />
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
               </details>
 
