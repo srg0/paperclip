@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const issueGetByIdMock = vi.fn();
 const upsertIssueDocumentMock = vi.fn();
+const executionWorkspaceGetByIdMock = vi.fn();
 
 vi.mock("../services/companies.js", () => ({
   companyService: () => ({}),
@@ -23,6 +24,12 @@ vi.mock("../services/issues.js", () => ({
 
 vi.mock("../services/goals.js", () => ({
   goalService: () => ({}),
+}));
+
+vi.mock("../services/execution-workspaces.js", () => ({
+  executionWorkspaceService: () => ({
+    getById: executionWorkspaceGetByIdMock,
+  }),
 }));
 
 vi.mock("../services/documents.js", () => ({
@@ -79,6 +86,7 @@ describe("plugin host issue document forwarding", () => {
       id: "issue-1",
       companyId: "company-1",
     });
+    executionWorkspaceGetByIdMock.mockResolvedValue(null);
     upsertIssueDocumentMock.mockResolvedValue({
       document: {
         id: "doc-1",
@@ -122,6 +130,52 @@ describe("plugin host issue document forwarding", () => {
       body: "# updated",
       changeSummary: "refresh projection",
       baseRevisionId: "rev-1",
+    }));
+  });
+
+  it("enriches issues.get with currentExecutionWorkspace for plugin workers", async () => {
+    issueGetByIdMock.mockResolvedValue({
+      id: "issue-1",
+      companyId: "company-1",
+      executionWorkspaceId: "ws-1",
+    });
+    executionWorkspaceGetByIdMock.mockResolvedValue({
+      id: "ws-1",
+      companyId: "company-1",
+      name: "Issue workspace",
+      cwd: "/tmp/ws",
+      repoUrl: "ssh://git@example.test/repo.git",
+      branchName: "feature/issue",
+    });
+
+    const { buildHostServices } = await import("../services/plugin-host-services.js");
+
+    const hostServices = buildHostServices(
+      {} as any,
+      "plugin-1",
+      "homio.atlas-bridge",
+      {
+        forPlugin: () => ({
+          publish: vi.fn(),
+          subscribe: vi.fn(() => ({ unsubscribe: vi.fn() })),
+        }),
+      } as any,
+    );
+
+    const issue = await hostServices.issues.get({
+      companyId: "company-1",
+      issueId: "issue-1",
+    } as any);
+
+    expect(executionWorkspaceGetByIdMock).toHaveBeenCalledWith("ws-1");
+    expect(issue).toEqual(expect.objectContaining({
+      id: "issue-1",
+      executionWorkspaceId: "ws-1",
+      currentExecutionWorkspace: expect.objectContaining({
+        id: "ws-1",
+        repoUrl: "ssh://git@example.test/repo.git",
+        branchName: "feature/issue",
+      }),
     }));
   });
 });

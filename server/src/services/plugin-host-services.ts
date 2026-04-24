@@ -15,6 +15,7 @@ import { companyService } from "./companies.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
 import { issueService } from "./issues.js";
+import { executionWorkspaceService } from "./execution-workspaces.js";
 import { goalService } from "./goals.js";
 import { documentService } from "./documents.js";
 import { heartbeatService } from "./heartbeat.js";
@@ -451,6 +452,7 @@ export function buildHostServices(
   const heartbeat = heartbeatService(db);
   const projects = projectService(db);
   const issues = issueService(db);
+  const executionWorkspaces = executionWorkspaceService(db);
   const documents = documentService(db);
   const goals = goalService(db);
   const activity = activityService(db);
@@ -508,6 +510,29 @@ export function buildHostServices(
       throw new Error(`${entityName} not found`);
     }
     return record;
+  };
+
+  const enrichIssueForPlugin = async (issue: Issue | null): Promise<Issue | null> => {
+    if (!issue) return null;
+
+    const issueRecord = issue as Issue & {
+      executionWorkspaceId?: string | null;
+      currentExecutionWorkspace?: unknown;
+    };
+
+    if (issueRecord.currentExecutionWorkspace || !issueRecord.executionWorkspaceId) {
+      return issue;
+    }
+
+    const currentExecutionWorkspace = await executionWorkspaces.getById(issueRecord.executionWorkspaceId);
+    if (!currentExecutionWorkspace) {
+      return issue;
+    }
+
+    return {
+      ...issueRecord,
+      currentExecutionWorkspace,
+    } as Issue;
   };
 
   return {
@@ -765,7 +790,8 @@ export function buildHostServices(
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
         const issue = await issues.getById(params.issueId);
-        return (inCompany(issue, companyId) ? issue : null) as Issue | null;
+        if (!inCompany(issue, companyId)) return null;
+        return await enrichIssueForPlugin(issue as Issue);
       },
       async create(params) {
         const companyId = ensureCompanyId(params.companyId);
