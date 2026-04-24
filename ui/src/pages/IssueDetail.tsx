@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -305,6 +305,74 @@ function HistoryRunRow({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function DashboardCard({
+  eyebrow,
+  title,
+  detail,
+  children,
+  testId,
+}: {
+  eyebrow: string;
+  title: string;
+  detail?: string | null;
+  children?: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <div
+      className="rounded-2xl border border-border bg-card/80 p-4 shadow-sm"
+      {...(testId ? { "data-testid": testId } : {})}
+    >
+      <div className="space-y-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{eyebrow}</p>
+        <h3 className="text-base font-semibold text-foreground">{title}</h3>
+        {detail ? <p className="text-sm leading-6 text-muted-foreground">{detail}</p> : null}
+      </div>
+      {children ? <div className="mt-4">{children}</div> : null}
+    </div>
+  );
+}
+
+function DashboardDisclosure({
+  title,
+  description,
+  countLabel,
+  defaultOpen = false,
+  children,
+  testId,
+}: {
+  title: string;
+  description: string;
+  countLabel?: string | null;
+  defaultOpen?: boolean;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <details
+      className="group rounded-2xl border border-border bg-card/80 p-4"
+      open={defaultOpen}
+      {...(testId ? { "data-testid": testId } : {})}
+    >
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+            <span className="text-sm font-semibold text-foreground">{title}</span>
+            {countLabel ? (
+              <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                {countLabel}
+              </span>
+            ) : null}
+          </div>
+          <p className="pl-6 text-sm leading-6 text-muted-foreground">{description}</p>
+        </div>
+      </summary>
+      <div className="mt-4 space-y-4">{children}</div>
+    </details>
   );
 }
 
@@ -771,6 +839,67 @@ export function IssueDetail() {
       mismatchText: executionCommentContext?.projectionWarning && !latestLiveRun ? executionCommentContext.projectionWarning : baseModel.mismatchText,
     };
   }, [issue, executionDocument, linkedRuns, liveRuns, activeRun, activity, agents, executionCommentContext, latestLiveRun]);
+  const latestActivityAt = useMemo(
+    () => [...(activity ?? [])]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]?.createdAt ?? null,
+    [activity],
+  );
+  const latestTimelineRun = useMemo(() => {
+    return [...timelineRuns].sort((a, b) => {
+      const aTime = new Date(a.startedAt ?? a.createdAt).getTime();
+      const bTime = new Date(b.startedAt ?? b.createdAt).getTime();
+      return bTime - aTime;
+    })[0] ?? null;
+  }, [timelineRuns]);
+  const dashboardState = useMemo(() => {
+    if (pendingFollowupStatus?.state === "blocked" || pendingFollowupStatus?.state === "failed") {
+      return {
+        label: pendingFollowupStatus.title,
+        detail: pendingFollowupStatus.detail ?? pendingFollowupStatus.summary,
+      };
+    }
+    if (
+      pendingFollowupStatus?.state === "pending"
+      || pendingFollowupStatus?.state === "accepted"
+      || pendingFollowupStatus?.state === "queued"
+      || pendingFollowupStatus?.state === "running"
+    ) {
+      return {
+        label: pendingFollowupStatus.title,
+        detail: pendingFollowupStatus.summary,
+      };
+    }
+    if (hasLiveRuns) {
+      return {
+        label: "Running",
+        detail: latestLiveRun?.triggerDetail ?? "Atlas is actively working on the task.",
+      };
+    }
+    if (executionHeaderModel?.flowStatus) {
+      return {
+        label: executionHeaderModel.flowStatus,
+        detail: executionHeaderModel.summary ?? "Atlas left the latest projection for this issue.",
+      };
+    }
+    return {
+      label: "Idle",
+      detail: "No active Atlas turn is running right now.",
+    };
+  }, [executionHeaderModel, hasLiveRuns, latestLiveRun, pendingFollowupStatus]);
+  const dashboardSlotLabel = parsedExecutionDocument.slotEnv ?? "No slot";
+  const dashboardBranchLabel = parsedExecutionDocument.slotBranch ?? "Branch unknown";
+  const dashboardProjectionLabel = parsedExecutionDocument.updatedAt
+    ? relativeTime(parsedExecutionDocument.updatedAt)
+    : "No projection yet";
+  const dashboardSupportCounts = {
+    childIssues: childIssues.length,
+    approvals: linkedApprovals?.length ?? 0,
+    attachments: attachments?.length ?? 0,
+    documents: issue?.documentSummaries?.length ?? 0,
+    runs: timelineRuns.length,
+    comments: timelineComments.length,
+    activity: activity?.length ?? 0,
+  };
   const invalidateIssue = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!) });
@@ -1461,12 +1590,38 @@ export function IssueDetail() {
       </div>
 
       <Sheet open={opsPanelsOpen} onOpenChange={setOpsPanelsOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-3xl lg:max-w-[1100px]" data-testid="issue-debug-panels-sheet">
-          <SheetHeader>
-            <SheetTitle className="text-sm">Task dashboard</SheetTitle>
+        <SheetContent
+          side="right"
+          className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl lg:max-w-[920px]"
+          data-testid="issue-debug-panels-sheet"
+        >
+          <SheetHeader className="border-b border-border px-6 py-4 text-left">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1">
+                <SheetTitle className="text-sm">Task dashboard</SheetTitle>
+                <p className="text-sm text-muted-foreground">
+                  Environment controls, latest runtime state, and collapsed support surfaces.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={issue.status} />
+                {hasLiveRuns ? <StatusBadge status="running" /> : null}
+                {queuedComments.length > 0 ? (
+                  <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
+                    Queue {queuedComments.length}
+                  </span>
+                ) : null}
+                {(linkedApprovals?.length ?? 0) > 0 ? (
+                  <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
+                    Approvals {linkedApprovals?.length ?? 0}
+                  </span>
+                ) : null}
+              </div>
+            </div>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-96px)] pr-4">
-            <div className="space-y-6 py-4">
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8">
+            <div className="space-y-4 py-4">
               {executionHeaderModel ? (
                 <IssueExecutionHeader
                   model={executionHeaderModel}
@@ -1475,44 +1630,85 @@ export function IssueDetail() {
                 />
               ) : null}
 
-              <div className="rounded-2xl border border-border bg-card/80 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3" data-testid="issue-hidden-debug-summary">
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Task Dashboard
-                    </p>
-                    <h3 className="text-lg font-semibold text-foreground">
-                      Atlas controls and raw execution surfaces.
-                    </h3>
-                    <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                      The main route stays single-chat. Use this dashboard for slot control, build/sync actions, raw runs, comments, activity and deeper support panels.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <StatusBadge status={issue.status} />
-                    {hasLiveRuns ? <StatusBadge status="running" /> : null}
-                    {queuedComments.length > 0 ? (
-                      <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
-                        Queue {queuedComments.length}
-                      </span>
+              <DashboardCard
+                eyebrow="Current state"
+                title={dashboardState.label}
+                detail={dashboardState.detail}
+                testId="issue-hidden-debug-summary"
+              >
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-xl border border-border bg-background/70 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Workspace</div>
+                    <div className="mt-2 text-sm font-semibold text-foreground">{dashboardSlotLabel}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{dashboardBranchLabel}</div>
+                    {parsedExecutionDocument.slotStatus ? (
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        Slot status: <span className="font-medium text-foreground">{parsedExecutionDocument.slotStatus}</span>
+                      </div>
                     ) : null}
-                    {linkedApprovals?.length ? (
-                      <span className="inline-flex items-center rounded-full border border-border bg-accent/20 px-3 py-1 text-xs font-medium text-foreground">
-                        Approvals {linkedApprovals.length}
-                      </span>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-background/70 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Pending work</div>
+                    <div className="mt-2 text-sm font-semibold text-foreground">
+                      {queuedComments.length > 0 ? `${queuedComments.length} queued` : "No queue"}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {(linkedApprovals?.length ?? 0) > 0 ? `${linkedApprovals?.length ?? 0} approvals need attention` : "No approval blockers"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-background/70 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Preview & evidence</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {parsedExecutionDocument.standUrl ? (
+                        <a
+                          href={parsedExecutionDocument.standUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent/30"
+                        >
+                          Open preview
+                        </a>
+                      ) : null}
+                      {parsedExecutionDocument.evidenceUrl ? (
+                        <a
+                          href={parsedExecutionDocument.evidenceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent/30"
+                        >
+                          Open evidence
+                        </a>
+                      ) : null}
+                      {!parsedExecutionDocument.standUrl && !parsedExecutionDocument.evidenceUrl ? (
+                        <span className="text-xs text-muted-foreground">No public output links yet.</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-background/70 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Latest trace</div>
+                    <div className="mt-2 text-sm font-semibold text-foreground">{dashboardProjectionLabel}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {latestActivityAt ? `Latest activity ${relativeTime(latestActivityAt)}` : "No activity yet"}
+                    </div>
+                    {latestTimelineRun ? (
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        Last run <span className="font-medium text-foreground">{latestTimelineRun.runId.slice(0, 8)}</span>
+                      </div>
                     ) : null}
                   </div>
                 </div>
-              </div>
+              </DashboardCard>
 
               {issuePluginDetailSlots.length > 0 ? (
-                <div className="space-y-3 rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-task-dashboard-panels">
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Task controls</p>
-                    <p className="text-sm text-muted-foreground">
-                      Atlas stand lifecycle, build actions and execution controls stay here so the primary chat can remain compact.
-                    </p>
-                  </div>
+                <DashboardCard
+                  eyebrow="Primary controls"
+                  title="Atlas controls"
+                  detail="Keep slot, build, sync, preview, and merge-request actions here so the main chat stays compact."
+                  testId="issue-task-dashboard-panels"
+                >
                   <div className="space-y-3">
                     {issuePluginDetailSlots.map((slot) => (
                       <PluginSlotMount
@@ -1528,15 +1724,16 @@ export function IssueDetail() {
                       />
                     ))}
                   </div>
-                </div>
+                </DashboardCard>
               ) : null}
 
               {childIssues.length > 0 ? (
-                <div className="space-y-3 rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-subissues">
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sub-issues</p>
-                    <p className="text-sm text-muted-foreground">Related issue tree kept outside the main chat.</p>
-                  </div>
+                <DashboardDisclosure
+                  title="Sub-issues"
+                  description="Related issue tree stays available here without competing with the primary chat."
+                  countLabel={String(dashboardSupportCounts.childIssues)}
+                  testId="issue-hidden-subissues"
+                >
                   <div className="overflow-hidden rounded-2xl border border-border bg-card">
                     {childIssues.map((child) => (
                       <Link
@@ -1562,15 +1759,16 @@ export function IssueDetail() {
                       </Link>
                     ))}
                   </div>
-                </div>
+                </DashboardDisclosure>
               ) : null}
 
               {linkedApprovals && linkedApprovals.length > 0 ? (
-                <div className="space-y-3 rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-approvals">
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Approvals</p>
-                    <p className="text-sm text-muted-foreground">Approval trail is hidden from the main chat but still available here.</p>
-                  </div>
+                <DashboardDisclosure
+                  title="Approvals"
+                  description="Approval trail stays out of the main chat, but remains visible when you need to unblock or audit the flow."
+                  countLabel={String(dashboardSupportCounts.approvals)}
+                  testId="issue-hidden-approvals"
+                >
                   <div className="overflow-hidden rounded-2xl border border-border bg-card">
                     {linkedApprovals.map((approval) => (
                       <Link
@@ -1591,240 +1789,236 @@ export function IssueDetail() {
                       </Link>
                     ))}
                   </div>
-                </div>
+                </DashboardDisclosure>
               ) : null}
 
-              <details className="rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-advanced-debug">
-                <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
-                  Advanced debug surfaces
-                </summary>
-                <div className="mt-4 space-y-4">
-                  <IssueWorkspaceCard
-                    issue={issue}
-                    project={orderedProjects.find((p) => p.id === issue.projectId) ?? null}
-                    onUpdate={(data) => updateIssue.mutate(data)}
-                  />
+              <DashboardDisclosure
+                title="History"
+                description="Runs, comments, activity, and spend stay here for audit/debug work, not in the first screen of the task drawer."
+                countLabel={`${dashboardSupportCounts.runs} runs`}
+                testId="issue-hidden-history"
+              >
+                <Tabs value={historyTab} onValueChange={setHistoryTab} className="space-y-3">
+                  <TabsList variant="line" className="w-full justify-start gap-1">
+                    <TabsTrigger value="runs" className="gap-1.5">
+                      <Repeat className="h-3.5 w-3.5" />
+                      Runs
+                    </TabsTrigger>
+                    <TabsTrigger value="comments" className="gap-1.5">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Comments
+                    </TabsTrigger>
+                    <TabsTrigger value="activity" className="gap-1.5">
+                      <ActivityIcon className="h-3.5 w-3.5" />
+                      Activity
+                    </TabsTrigger>
+                  </TabsList>
 
-                  <Separator />
-
-                  <IssueDocumentsSection
-                    issue={issue}
-                    canDeleteDocuments={Boolean(session?.user?.id)}
-                    mentions={mentionOptions}
-                    imageUploadHandler={async (file) => {
-                      const attachment = await uploadAttachment.mutateAsync(file);
-                      return attachment.contentPath;
-                    }}
-                    extraActions={!hasAttachments ? attachmentUploadButton : undefined}
-                  />
-
-                  {hasAttachments ? (
-                    <div
-                      className={cn("space-y-3 rounded-lg transition-colors")}
-                      onDragEnter={(evt) => {
-                        evt.preventDefault();
-                        setAttachmentDragActive(true);
-                      }}
-                      onDragOver={(evt) => {
-                        evt.preventDefault();
-                        setAttachmentDragActive(true);
-                      }}
-                      onDragLeave={(evt) => {
-                        if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
-                        setAttachmentDragActive(false);
-                      }}
-                      onDrop={(evt) => void handleAttachmentDrop(evt)}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
-                        {attachmentUploadButton}
-                      </div>
-
-                      {attachmentError && (
-                        <p className="text-xs text-destructive">{attachmentError}</p>
-                      )}
-
-                      <div className="space-y-2">
-                        {attachmentList.map((attachment) => (
-                          <div key={attachment.id} className="border border-border rounded-md p-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <a
-                                href={attachment.contentPath}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-xs hover:underline truncate"
-                                title={attachment.originalFilename ?? attachment.id}
-                              >
-                                {attachment.originalFilename ?? attachment.id}
-                              </a>
-                              <button
-                                type="button"
-                                className="text-muted-foreground hover:text-destructive"
-                                onClick={() => deleteAttachment.mutate(attachment.id)}
-                                disabled={deleteAttachment.isPending}
-                                title="Delete attachment"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                            <p className="text-[11px] text-muted-foreground">
-                              {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
-                            </p>
-                            {isImageAttachment(attachment) && (
-                              <a href={attachment.contentPath} target="_blank" rel="noreferrer">
-                                <img
-                                  src={attachment.contentPath}
-                                  alt={attachment.originalFilename ?? "attachment"}
-                                  className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
-                                  loading="lazy"
-                                />
-                              </a>
-                            )}
+                  <TabsContent value="runs" className="space-y-4">
+                    {compactRunStatusGroups.length > 0 ? (
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        {compactRunStatusGroups.map((group) => (
+                          <div key={group.label} className="rounded-2xl border border-border bg-card px-4 py-3">
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Grouped</div>
+                            <div className="mt-2 text-sm font-medium text-foreground">{group.label}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">{group.count} runs</div>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
 
-                </div>
-              </details>
+                    {!timelineRuns.length ? (
+                      <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                        No runs yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {timelineRuns.slice(0, 40).map((run) => (
+                          <HistoryRunRow
+                            key={run.runId}
+                            run={run}
+                            agentName={agentMap.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
 
-              <div className="rounded-2xl border border-border bg-card/80 p-4" data-testid="issue-hidden-history">
-                <div className="space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">History</p>
-                  <h3 className="text-lg font-semibold text-foreground">Raw comments, runs and activity.</h3>
-                  <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                    These panels stay out of the main route and only open when you need to debug or audit the issue timeline.
-                  </p>
-                </div>
-              </div>
+                  <TabsContent value="comments">
+                    <CommentThread
+                      comments={timelineComments}
+                      queuedComments={queuedComments}
+                      linkedRuns={[]}
+                      companyId={issue.companyId}
+                      projectId={issue.projectId}
+                      issueStatus={issue.status}
+                      agentMap={agentMap}
+                      draftKey={`paperclip:issue-comment-draft:${issue.id}`}
+                      enableReassign
+                      reassignOptions={commentReassignOptions}
+                      currentAssigneeValue={actualAssigneeValue}
+                      suggestedAssigneeValue={suggestedAssigneeValue}
+                      mentions={mentionOptions}
+                      onInterruptQueued={async (runId) => {
+                        await interruptQueuedComment.mutateAsync(runId);
+                      }}
+                      interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
+                      onAdd={async () => {}}
+                      imageUploadHandler={async (file) => {
+                        const attachment = await uploadAttachment.mutateAsync(file);
+                        return attachment.contentPath;
+                      }}
+                      onAttachImage={async (file) => {
+                        await uploadAttachment.mutateAsync(file);
+                      }}
+                      showComposer={false}
+                      title="Comments"
+                    />
+                  </TabsContent>
 
-              <Tabs value={historyTab} onValueChange={setHistoryTab} className="space-y-3">
-                <TabsList variant="line" className="w-full justify-start gap-1">
-                  <TabsTrigger value="runs" className="gap-1.5">
-                    <Repeat className="h-3.5 w-3.5" />
-                    Runs
-                  </TabsTrigger>
-                  <TabsTrigger value="comments" className="gap-1.5">
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    Comments
-                  </TabsTrigger>
-                  <TabsTrigger value="activity" className="gap-1.5">
-                    <ActivityIcon className="h-3.5 w-3.5" />
-                    Activity
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="runs" className="space-y-4">
-                  {compactRunStatusGroups.length > 0 ? (
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      {compactRunStatusGroups.map((group) => (
-                        <div key={group.label} className="rounded-2xl border border-border bg-card px-4 py-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Grouped</div>
-                          <div className="mt-2 text-sm font-medium text-foreground">{group.label}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">{group.count} runs</div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {!timelineRuns.length ? (
-                    <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
-                      No runs yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {timelineRuns.slice(0, 40).map((run) => (
-                        <HistoryRunRow
-                          key={run.runId}
-                          run={run}
-                          agentName={agentMap.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="comments">
-                  <CommentThread
-                    comments={timelineComments}
-                    queuedComments={queuedComments}
-                    linkedRuns={[]}
-                    companyId={issue.companyId}
-                    projectId={issue.projectId}
-                    issueStatus={issue.status}
-                    agentMap={agentMap}
-                    draftKey={`paperclip:issue-comment-draft:${issue.id}`}
-                    enableReassign
-                    reassignOptions={commentReassignOptions}
-                    currentAssigneeValue={actualAssigneeValue}
-                    suggestedAssigneeValue={suggestedAssigneeValue}
-                    mentions={mentionOptions}
-                    onInterruptQueued={async (runId) => {
-                      await interruptQueuedComment.mutateAsync(runId);
-                    }}
-                    interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
-                    onAdd={async () => {}}
-                    imageUploadHandler={async (file) => {
-                      const attachment = await uploadAttachment.mutateAsync(file);
-                      return attachment.contentPath;
-                    }}
-                    onAttachImage={async (file) => {
-                      await uploadAttachment.mutateAsync(file);
-                    }}
-                    showComposer={false}
-                    title="Comments"
-                  />
-                </TabsContent>
-
-                <TabsContent value="activity">
-                  {linkedRuns && linkedRuns.length > 0 && (
-                    <div className="mb-3 rounded-2xl border border-border bg-card px-4 py-3">
-                      <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>
-                      {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
-                        <div className="text-xs text-muted-foreground">No cost data yet.</div>
-                      ) : (
-                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
-                          {issueCostSummary.hasCost && (
-                            <span className="font-medium text-foreground">
-                              ${issueCostSummary.cost.toFixed(4)}
-                            </span>
-                          )}
-                          {issueCostSummary.hasTokens && (
-                            <span>
-                              Tokens {formatTokens(issueCostSummary.totalTokens)}
-                              {issueCostSummary.cached > 0
-                                ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
-                                : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {!activity || activity.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
-                      No activity yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {activity.slice(0, 60).map((evt) => (
-                        <div key={evt.id} className="rounded-2xl border border-border bg-card px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <ActorIdentity evt={evt} agentMap={agentMap} />
-                            <span className="text-sm text-foreground">{formatAction(evt.action, evt.details)}</span>
-                            <span className="ml-auto text-xs text-muted-foreground" title={formatFullTimeTitle(evt.createdAt)}>
-                              {formatClockTime(evt.createdAt)}
-                            </span>
+                  <TabsContent value="activity">
+                    {linkedRuns && linkedRuns.length > 0 && (
+                      <div className="mb-3 rounded-2xl border border-border bg-card px-4 py-3">
+                        <div className="mb-1 text-sm font-medium text-muted-foreground">Cost Summary</div>
+                        {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
+                          <div className="text-xs text-muted-foreground">No cost data yet.</div>
+                        ) : (
+                          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
+                            {issueCostSummary.hasCost && (
+                              <span className="font-medium text-foreground">
+                                ${issueCostSummary.cost.toFixed(4)}
+                              </span>
+                            )}
+                            {issueCostSummary.hasTokens && (
+                              <span>
+                                Tokens {formatTokens(issueCostSummary.totalTokens)}
+                                {issueCostSummary.cached > 0
+                                  ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
+                                  : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
+                              </span>
+                            )}
                           </div>
+                        )}
+                      </div>
+                    )}
+                    {!activity || activity.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-5 text-sm text-muted-foreground">
+                        No activity yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {activity.slice(0, 60).map((evt) => (
+                          <div key={evt.id} className="rounded-2xl border border-border bg-card px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <ActorIdentity evt={evt} agentMap={agentMap} />
+                              <span className="text-sm text-foreground">{formatAction(evt.action, evt.details)}</span>
+                              <span className="ml-auto text-xs text-muted-foreground" title={formatFullTimeTitle(evt.createdAt)}>
+                                {formatClockTime(evt.createdAt)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </DashboardDisclosure>
+
+              <DashboardDisclosure
+                title="Advanced debug"
+                description="Documents, attachments, and lower-level issue maintenance remain available here without competing with the task controls."
+                countLabel={`${dashboardSupportCounts.documents} docs / ${dashboardSupportCounts.attachments} attachments`}
+                testId="issue-hidden-advanced-debug"
+              >
+                <IssueWorkspaceCard
+                  issue={issue}
+                  project={orderedProjects.find((p) => p.id === issue.projectId) ?? null}
+                  onUpdate={(data) => updateIssue.mutate(data)}
+                />
+
+                <Separator />
+
+                <IssueDocumentsSection
+                  issue={issue}
+                  canDeleteDocuments={Boolean(session?.user?.id)}
+                  mentions={mentionOptions}
+                  imageUploadHandler={async (file) => {
+                    const attachment = await uploadAttachment.mutateAsync(file);
+                    return attachment.contentPath;
+                  }}
+                  extraActions={!hasAttachments ? attachmentUploadButton : undefined}
+                />
+
+                {hasAttachments ? (
+                  <div
+                    className={cn("space-y-3 rounded-lg transition-colors")}
+                    onDragEnter={(evt) => {
+                      evt.preventDefault();
+                      setAttachmentDragActive(true);
+                    }}
+                    onDragOver={(evt) => {
+                      evt.preventDefault();
+                      setAttachmentDragActive(true);
+                    }}
+                    onDragLeave={(evt) => {
+                      if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
+                      setAttachmentDragActive(false);
+                    }}
+                    onDrop={(evt) => void handleAttachmentDrop(evt)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
+                      {attachmentUploadButton}
+                    </div>
+
+                    {attachmentError && (
+                      <p className="text-xs text-destructive">{attachmentError}</p>
+                    )}
+
+                    <div className="space-y-2">
+                      {attachmentList.map((attachment) => (
+                        <div key={attachment.id} className="rounded-md border border-border p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <a
+                              href={attachment.contentPath}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="truncate text-xs hover:underline"
+                              title={attachment.originalFilename ?? attachment.id}
+                            >
+                              {attachment.originalFilename ?? attachment.id}
+                            </a>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() => deleteAttachment.mutate(attachment.id)}
+                              disabled={deleteAttachment.isPending}
+                              title="Delete attachment"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
+                          </p>
+                          {isImageAttachment(attachment) && (
+                            <a href={attachment.contentPath} target="_blank" rel="noreferrer">
+                              <img
+                                src={attachment.contentPath}
+                                alt={attachment.originalFilename ?? "attachment"}
+                                className="mt-2 max-h-56 rounded border border-border bg-accent/10 object-contain"
+                                loading="lazy"
+                              />
+                            </a>
+                          )}
                         </div>
                       ))}
                     </div>
-                  )}
-                </TabsContent>
-              </Tabs>
+                  </div>
+                ) : null}
+              </DashboardDisclosure>
             </div>
-          </ScrollArea>
+          </div>
         </SheetContent>
       </Sheet>
 
