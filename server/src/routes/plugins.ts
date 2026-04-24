@@ -352,6 +352,17 @@ export function pluginRoutes(
     return undefined;
   }
 
+  function withBridgeActorParams(
+    req: Request,
+    params: Record<string, unknown> | undefined,
+  ): Record<string, unknown> {
+    const nextParams = { ...(params ?? {}) };
+    if (req.actor.type === "board" && req.actor.userId) {
+      nextParams.paperclipUserId = req.actor.userId;
+    }
+    return nextParams;
+  }
+
   async function resolvePluginAuditCompanyIds(req: Request): Promise<string[]> {
     if (typeof (db as { select?: unknown }).select === "function") {
       const rows = await db
@@ -1028,7 +1039,7 @@ export function pluginRoutes(
         "getData",
         {
           key,
-          params: body?.params ?? {},
+          params: withBridgeActorParams(req, body?.params),
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );
@@ -1103,7 +1114,7 @@ export function pluginRoutes(
         "performAction",
         {
           key,
-          params: body?.params ?? {},
+          params: withBridgeActorParams(req, body?.params),
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );
