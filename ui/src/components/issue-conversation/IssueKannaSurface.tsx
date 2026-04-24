@@ -78,7 +78,7 @@ export function IssueKannaSurface({
       <div className="rounded-3xl border border-border bg-card/80 p-6 shadow-sm">
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Connecting Kanna to the current Atlas workspace…
+          Connecting chat to the current Atlas workspace…
         </div>
       </div>
     );
@@ -90,7 +90,7 @@ export function IssueKannaSurface({
         <div className="rounded-3xl border border-border bg-card/80 p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-2">
-              <div className="text-sm font-semibold text-foreground">Kanna embed is not available yet</div>
+              <div className="text-sm font-semibold text-foreground">Chat surface is not available yet</div>
               <p className="text-sm text-muted-foreground">
                 {embed?.message ?? "Atlas has not mounted a live workspace for this issue yet."}
               </p>
@@ -116,7 +116,7 @@ export function IssueKannaSurface({
     <div className="space-y-3" data-testid="issue-kanna-surface">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card/60 px-4 py-3">
         <div className="min-w-0 space-y-1">
-          <div className="text-sm font-semibold text-foreground">Kanna session</div>
+          <div className="text-sm font-semibold text-foreground">Agent session</div>
           <div className="text-xs text-muted-foreground">
             {embed?.envName ? `Workspace ${embed.envName}` : "Atlas workspace"}
             {embed?.branch ? ` · ${embed.branch}` : ""}
@@ -135,7 +135,7 @@ export function IssueKannaSurface({
 
       <div className="overflow-hidden rounded-[28px] border border-border bg-background shadow-sm">
         <iframe
-          title={`Kanna for issue ${issueId}`}
+          title={`Agent chat for issue ${issueId}`}
           src={safeEmbedUrl}
           className="h-[calc(100vh-22rem)] min-h-[720px] w-full border-0 bg-background"
           referrerPolicy="strict-origin-when-cross-origin"
