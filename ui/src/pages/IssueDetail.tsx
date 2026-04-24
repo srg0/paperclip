@@ -1558,6 +1558,7 @@ export function IssueDetail() {
         <IssueKannaSurface
           issueId={issue.id}
           companyId={issue.companyId}
+          executionWorkspace={issue.currentExecutionWorkspace ?? null}
           enabled={shouldPreferKannaSurface}
           fallback={(
             <>

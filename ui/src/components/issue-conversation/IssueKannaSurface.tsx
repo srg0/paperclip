@@ -1,3 +1,4 @@
+import type { ExecutionWorkspace } from "@paperclipai/shared";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
@@ -20,6 +21,7 @@ type AtlasKannaEmbedData = {
 type IssueKannaSurfaceProps = {
   issueId: string;
   companyId: string;
+  executionWorkspace?: ExecutionWorkspace | null;
   enabled: boolean;
   fallback: ReactNode;
 };
@@ -27,11 +29,19 @@ type IssueKannaSurfaceProps = {
 export function IssueKannaSurface({
   issueId,
   companyId,
+  executionWorkspace,
   enabled,
   fallback,
 }: IssueKannaSurfaceProps) {
   const kannaEmbedQuery = useQuery({
-    queryKey: ["atlas-bridge-kanna-embed", companyId, issueId],
+    queryKey: [
+      "atlas-bridge-kanna-embed",
+      companyId,
+      issueId,
+      executionWorkspace?.id ?? null,
+      executionWorkspace?.cwd ?? null,
+      executionWorkspace?.branchName ?? null,
+    ],
     enabled,
     retry: false,
     staleTime: 30_000,
@@ -39,7 +49,14 @@ export function IssueKannaSurface({
       const response = await pluginsApi.bridgeGetData(
         ATLAS_BRIDGE_PLUGIN_ID,
         ATLAS_BRIDGE_KANNA_EMBED_KEY,
-        { issueId },
+        {
+          issueId,
+          executionWorkspaceId: executionWorkspace?.id ?? null,
+          workspaceName: executionWorkspace?.name ?? null,
+          workspaceRepoUrl: executionWorkspace?.repoUrl ?? null,
+          workspaceBranch: executionWorkspace?.branchName ?? null,
+          workspaceCwd: executionWorkspace?.cwd ?? null,
+        },
         companyId,
         null,
       );
