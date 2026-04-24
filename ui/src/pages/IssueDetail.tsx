@@ -34,6 +34,7 @@ import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { IssueConversationComposer } from "../components/issue-conversation/IssueConversationComposer";
+import { IssueKannaSurface } from "../components/issue-conversation/IssueKannaSurface";
 import { IssueConversationSurface } from "../components/issue-conversation/IssueConversationSurface";
 import {
   buildIssueExecutionHeaderModel,
@@ -620,6 +621,11 @@ export function IssueDetail() {
     if (issueAssignee?.name === "Atlas Executor") return issueAssignee;
     return [...agentMap.values()].find((agent) => agent.name === "Atlas Executor") ?? issueAssignee ?? null;
   }, [agentMap, issue?.assigneeAgentId]);
+  const hasAtlasBridgeDetailSlot = useMemo(
+    () => issuePluginDetailSlots.some((slot) => slot.pluginId === "homio.atlas-bridge"),
+    [issuePluginDetailSlots],
+  );
+  const shouldPreferKannaSurface = Boolean(atlasPrimaryAgent || hasAtlasBridgeDetailSlot);
 
   // Filter out runs already shown by the live widget to avoid duplication
   const timelineRuns = useMemo(() => {
@@ -1549,43 +1555,52 @@ export function IssueDetail() {
       </div>
 
       <div className="space-y-4" data-testid="issue-primary-flow">
-        <IssueConversationSurface
-          pendingFollowupStatus={pendingFollowupStatus}
-          chatMessages={primaryChatMessages}
-        />
+        <IssueKannaSurface
+          issueId={issue.id}
+          companyId={issue.companyId}
+          enabled={shouldPreferKannaSurface}
+          fallback={(
+            <>
+              <IssueConversationSurface
+                pendingFollowupStatus={pendingFollowupStatus}
+                chatMessages={primaryChatMessages}
+              />
 
-        <IssueConversationComposer
-          key={issue.id}
-          onAdd={async (body, reopen, reassignment, commentTargetAgentId, options) => {
-            if (reassignment) {
-              await addCommentAndReassign.mutateAsync({
-                body,
-                reopen,
-                reassignment,
-                commentTargetAgentId,
-                ...(options?.interrupt ? { interrupt: true } : {}),
-              });
-              return;
-            }
-            await addComment.mutateAsync({
-              body,
-              reopen,
-              commentTargetAgentId,
-              ...(options?.interrupt ? { interrupt: true } : {}),
-            });
-          }}
-          imageUploadHandler={async (file) => {
-            const attachment = await uploadAttachment.mutateAsync(file);
-            return attachment.contentPath;
-          }}
-          onAttachImage={async (file) => {
-            await uploadAttachment.mutateAsync(file);
-          }}
-          fixedCommentTargetAgentId={atlasPrimaryAgent?.id ?? issue.assigneeAgentId ?? null}
-          primaryAgentLabel={atlasPrimaryAgent?.name ?? "Atlas Executor"}
-          agentMap={agentMap}
-          draftKey={`paperclip:issue-comment-draft:${issue.id}`}
-          issueStatus={issue.status}
+              <IssueConversationComposer
+                key={issue.id}
+                onAdd={async (body, reopen, reassignment, commentTargetAgentId, options) => {
+                  if (reassignment) {
+                    await addCommentAndReassign.mutateAsync({
+                      body,
+                      reopen,
+                      reassignment,
+                      commentTargetAgentId,
+                      ...(options?.interrupt ? { interrupt: true } : {}),
+                    });
+                    return;
+                  }
+                  await addComment.mutateAsync({
+                    body,
+                    reopen,
+                    commentTargetAgentId,
+                    ...(options?.interrupt ? { interrupt: true } : {}),
+                  });
+                }}
+                imageUploadHandler={async (file) => {
+                  const attachment = await uploadAttachment.mutateAsync(file);
+                  return attachment.contentPath;
+                }}
+                onAttachImage={async (file) => {
+                  await uploadAttachment.mutateAsync(file);
+                }}
+                fixedCommentTargetAgentId={atlasPrimaryAgent?.id ?? issue.assigneeAgentId ?? null}
+                primaryAgentLabel={atlasPrimaryAgent?.name ?? "Atlas Executor"}
+                agentMap={agentMap}
+                draftKey={`paperclip:issue-comment-draft:${issue.id}`}
+                issueStatus={issue.status}
+              />
+            </>
+          )}
         />
       </div>
 
