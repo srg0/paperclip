@@ -604,6 +604,10 @@ export function IssueDetail() {
     companyId: selectedCompanyId,
     userId: currentUserId,
   });
+  const currentProject = useMemo(
+    () => orderedProjects.find((project) => project.id === issue?.projectId) ?? null,
+    [orderedProjects, issue?.projectId],
+  );
   const { slots: issuePluginDetailSlots } = usePluginSlots({
     slotTypes: ["detailTab"],
     entityType: "issue",
@@ -1557,7 +1561,12 @@ export function IssueDetail() {
       <div className="space-y-4" data-testid="issue-primary-flow">
         <IssueKannaSurface
           issueId={issue.id}
+          issueIdentifier={issue.identifier}
+          issueTitle={issue.title}
           companyId={issue.companyId}
+          projectId={issue.projectId}
+          projectKey={currentProject?.urlKey ?? null}
+          projectName={currentProject?.name ?? null}
           executionWorkspace={issue.currentExecutionWorkspace ?? null}
           enabled={shouldPreferKannaSurface}
           fallback={(
@@ -1948,7 +1957,7 @@ export function IssueDetail() {
               >
                 <IssueWorkspaceCard
                   issue={issue}
-                  project={orderedProjects.find((p) => p.id === issue.projectId) ?? null}
+                  project={currentProject}
                   onUpdate={(data) => updateIssue.mutate(data)}
                 />
 

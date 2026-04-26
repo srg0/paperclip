@@ -1,5 +1,5 @@
 import type { ExecutionWorkspace } from "@paperclipai/shared";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,17 +18,51 @@ type AtlasKannaEmbedData = {
   branch?: string | null;
 };
 
+type StableKannaFrameState = {
+  identity: string;
+  src: string;
+};
+
 type IssueKannaSurfaceProps = {
   issueId: string;
+  issueIdentifier?: string | null;
+  issueTitle?: string | null;
   companyId: string;
+  projectId?: string | null;
+  projectKey?: string | null;
+  projectName?: string | null;
   executionWorkspace?: ExecutionWorkspace | null;
   enabled: boolean;
   fallback: ReactNode;
 };
 
+function normalizeKannaEmbedIdentity(
+  embedUrl: string | null,
+  embed: AtlasKannaEmbedData | null | undefined,
+  issueId: string,
+): string | null {
+  if (!embedUrl) return null;
+  const chatId = typeof embed?.chatId === "string" && embed.chatId.trim() ? embed.chatId.trim() : null;
+  const envName = typeof embed?.envName === "string" && embed.envName.trim() ? embed.envName.trim() : null;
+  const branch = typeof embed?.branch === "string" && embed.branch.trim() ? embed.branch.trim() : null;
+  try {
+    const url = new URL(embedUrl);
+    url.searchParams.delete("kannaEmbedToken");
+    return [issueId, chatId ?? url.pathname, envName ?? "", branch ?? "", url.origin].join("|");
+  } catch {
+    const tokenlessUrl = embedUrl.replace(/([?&])kannaEmbedToken=[^&]+/, "$1");
+    return [issueId, chatId ?? tokenlessUrl, envName ?? "", branch ?? ""].join("|");
+  }
+}
+
 export function IssueKannaSurface({
   issueId,
+  issueIdentifier,
+  issueTitle,
   companyId,
+  projectId,
+  projectKey,
+  projectName,
   executionWorkspace,
   enabled,
   fallback,
@@ -38,9 +72,14 @@ export function IssueKannaSurface({
       "atlas-bridge-kanna-embed",
       companyId,
       issueId,
+      issueIdentifier ?? null,
+      issueTitle ?? null,
       executionWorkspace?.id ?? null,
       executionWorkspace?.cwd ?? null,
       executionWorkspace?.branchName ?? null,
+      projectId ?? null,
+      projectKey ?? null,
+      projectName ?? null,
     ],
     enabled,
     retry: false,
@@ -51,6 +90,11 @@ export function IssueKannaSurface({
         ATLAS_BRIDGE_KANNA_EMBED_KEY,
         {
           issueId,
+          issueIdentifier: issueIdentifier ?? null,
+          issueTitle: issueTitle ?? null,
+          projectId: projectId ?? null,
+          projectKey: projectKey ?? null,
+          projectName: projectName ?? null,
           executionWorkspaceId: executionWorkspace?.id ?? null,
           workspaceName: executionWorkspace?.name ?? null,
           workspaceRepoUrl: executionWorkspace?.repoUrl ?? null,
@@ -66,8 +110,28 @@ export function IssueKannaSurface({
 
   const embed = kannaEmbedQuery.data;
   const embedUrl = typeof embed?.embedUrl === "string" ? embed.embedUrl : null;
-  const showKanna = Boolean(embed?.enabled && embedUrl);
-  const safeEmbedUrl = embedUrl ?? undefined;
+  const embedIdentity = useMemo(
+    () => normalizeKannaEmbedIdentity(embedUrl, embed, issueId),
+    [embed, embedUrl, issueId],
+  );
+  const [stableFrame, setStableFrame] = useState<StableKannaFrameState | null>(null);
+
+  useEffect(() => {
+    if (!embed?.enabled || !embedUrl || !embedIdentity) return;
+    setStableFrame((current) => {
+      if (current?.identity === embedIdentity) return current;
+      return { identity: embedIdentity, src: embedUrl };
+    });
+  }, [embed?.enabled, embedIdentity, embedUrl]);
+
+  const nextFrame =
+    embed?.enabled && embedUrl && embedIdentity
+      ? { identity: embedIdentity, src: embedUrl }
+      : null;
+  const activeStableFrame = stableFrame?.identity === embedIdentity ? stableFrame : nextFrame;
+  const showKanna = Boolean(embed?.enabled && activeStableFrame?.src);
+  const safeEmbedUrl = activeStableFrame?.src;
+  const latestOpenUrl = embedUrl ?? safeEmbedUrl;
 
   if (!enabled) {
     return <>{fallback}</>;
@@ -123,7 +187,7 @@ export function IssueKannaSurface({
           </div>
         </div>
         <a
-          href={safeEmbedUrl}
+          href={latestOpenUrl}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent/30"
@@ -137,6 +201,8 @@ export function IssueKannaSurface({
         <iframe
           title={`Agent chat for issue ${issueId}`}
           src={safeEmbedUrl}
+          data-kanna-chat-id={embed?.chatId ?? undefined}
+          data-kanna-embed-identity={activeStableFrame?.identity}
           className="h-[calc(100vh-22rem)] min-h-[720px] w-full border-0 bg-background"
           referrerPolicy="strict-origin-when-cross-origin"
           allow="clipboard-read; clipboard-write"
