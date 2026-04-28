@@ -212,7 +212,8 @@ post_json_with_cookies() {
   local url="$1"
   local body="$2"
   local output_file="$3"
-  curl -sS \
+  local http_status
+  if ! http_status="$(curl -sS \
     -o "$output_file" \
     -w "%{http_code}" \
     -c "$COOKIE_JAR" \
@@ -221,7 +222,11 @@ post_json_with_cookies() {
     -H "Origin: $PAPERCLIP_PUBLIC_URL" \
     -X POST \
     "$url" \
-    --data "$body"
+    --data "$body")"; then
+    printf '000'
+    return 0
+  fi
+  printf '%s' "$http_status"
 }
 
 get_with_cookies() {
@@ -236,25 +241,41 @@ get_with_cookies() {
 sign_up_or_sign_in() {
   local signup_response="$TMP_DIR/signup.json"
   local signup_status
-  signup_status="$(post_json_with_cookies \
-    "$PAPERCLIP_PUBLIC_URL/api/auth/sign-up/email" \
-    "{\"name\":\"$SMOKE_ADMIN_NAME\",\"email\":\"$SMOKE_ADMIN_EMAIL\",\"password\":\"$SMOKE_ADMIN_PASSWORD\"}" \
-    "$signup_response")"
-  if [[ "$signup_status" =~ ^2 ]]; then
-    echo "    Smoke bootstrap: created admin user $SMOKE_ADMIN_EMAIL"
-    return 0
-  fi
+  local signup_attempt
+  for ((signup_attempt = 1; signup_attempt <= 12; signup_attempt += 1)); do
+    signup_status="$(post_json_with_cookies \
+      "$PAPERCLIP_PUBLIC_URL/api/auth/sign-up/email" \
+      "{\"name\":\"$SMOKE_ADMIN_NAME\",\"email\":\"$SMOKE_ADMIN_EMAIL\",\"password\":\"$SMOKE_ADMIN_PASSWORD\"}" \
+      "$signup_response")"
+    if [[ "$signup_status" =~ ^2 ]]; then
+      echo "    Smoke bootstrap: created admin user $SMOKE_ADMIN_EMAIL"
+      return 0
+    fi
+    if [[ "$signup_status" == "000" || "$signup_status" =~ ^5 ]]; then
+      sleep 1
+      continue
+    fi
+    break
+  done
 
   local signin_response="$TMP_DIR/signin.json"
   local signin_status
-  signin_status="$(post_json_with_cookies \
-    "$PAPERCLIP_PUBLIC_URL/api/auth/sign-in/email" \
-    "{\"email\":\"$SMOKE_ADMIN_EMAIL\",\"password\":\"$SMOKE_ADMIN_PASSWORD\"}" \
-    "$signin_response")"
-  if [[ "$signin_status" =~ ^2 ]]; then
-    echo "    Smoke bootstrap: signed in existing admin user $SMOKE_ADMIN_EMAIL"
-    return 0
-  fi
+  local signin_attempt
+  for ((signin_attempt = 1; signin_attempt <= 12; signin_attempt += 1)); do
+    signin_status="$(post_json_with_cookies \
+      "$PAPERCLIP_PUBLIC_URL/api/auth/sign-in/email" \
+      "{\"email\":\"$SMOKE_ADMIN_EMAIL\",\"password\":\"$SMOKE_ADMIN_PASSWORD\"}" \
+      "$signin_response")"
+    if [[ "$signin_status" =~ ^2 ]]; then
+      echo "    Smoke bootstrap: signed in existing admin user $SMOKE_ADMIN_EMAIL"
+      return 0
+    fi
+    if [[ "$signin_status" == "000" || "$signin_status" =~ ^5 ]]; then
+      sleep 1
+      continue
+    fi
+    break
+  done
 
   echo "Smoke bootstrap failed: could not sign up or sign in admin user" >&2
   echo "Sign-up response:" >&2
@@ -286,10 +307,21 @@ auto_bootstrap_authenticated_smoke() {
     local invite_token="${invite_url##*/}"
     local accept_response="$TMP_DIR/accept.json"
     local accept_status
-    accept_status="$(post_json_with_cookies \
-      "$PAPERCLIP_PUBLIC_URL/api/invites/$invite_token/accept" \
-      '{"requestType":"human"}' \
-      "$accept_response")"
+    local accept_attempt
+    for ((accept_attempt = 1; accept_attempt <= 12; accept_attempt += 1)); do
+      accept_status="$(post_json_with_cookies \
+        "$PAPERCLIP_PUBLIC_URL/api/invites/$invite_token/accept" \
+        '{"requestType":"human"}' \
+        "$accept_response")"
+      if [[ "$accept_status" =~ ^2 ]]; then
+        break
+      fi
+      if [[ "$accept_status" == "000" || "$accept_status" == "404" || "$accept_status" =~ ^5 ]]; then
+        sleep 1
+        continue
+      fi
+      break
+    done
     if [[ ! "$accept_status" =~ ^2 ]]; then
       echo "Smoke bootstrap failed: bootstrap invite acceptance returned HTTP $accept_status" >&2
       cat "$accept_response" >&2 || true
