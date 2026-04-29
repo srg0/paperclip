@@ -26,6 +26,43 @@ const sharedOpts = {
   singleLine: true,
 };
 
+const optionalIssueDocumentKeys = new Set([
+  "atlas-execution",
+  "fingerprint",
+  "incident-fingerprint",
+  "source-reference",
+]);
+
+function routePath(req: unknown): string | null {
+  const path = (req as { route?: { path?: unknown } } | null)?.route?.path;
+  return typeof path === "string" ? path : null;
+}
+
+function requestMethod(req: unknown): string | null {
+  const method = (req as { method?: unknown } | null)?.method;
+  return typeof method === "string" ? method.toUpperCase() : null;
+}
+
+function requestParam(req: unknown, key: string): string | null {
+  const value = (req as { params?: Record<string, unknown> } | null)?.params?.[key];
+  return typeof value === "string" ? value.trim().toLowerCase() : null;
+}
+
+export function isExpectedMissingIssueDocument(req: unknown, statusCode: number): boolean {
+  if (statusCode !== 404) return false;
+  if (requestMethod(req) !== "GET") return false;
+  if (routePath(req) !== "/issues/:id/documents/:key") return false;
+  const key = requestParam(req, "key");
+  return !!key && optionalIssueDocumentKeys.has(key);
+}
+
+export function httpRequestLogLevel(req: unknown, statusCode: number, err?: unknown) {
+  if (err || statusCode >= 500) return "error";
+  if (isExpectedMissingIssueDocument(req, statusCode)) return "debug";
+  if (statusCode >= 400) return "warn";
+  return "info";
+}
+
 export const logger = pino({
   level: "debug",
 }, pino.transport({
@@ -46,9 +83,7 @@ export const logger = pino({
 export const httpLogger = pinoHttp({
   logger,
   customLogLevel(_req, res, err) {
-    if (err || res.statusCode >= 500) return "error";
-    if (res.statusCode >= 400) return "warn";
-    return "info";
+    return httpRequestLogLevel(_req, res.statusCode, err);
   },
   customSuccessMessage(req, res) {
     return `${req.method} ${req.url} ${res.statusCode}`;
