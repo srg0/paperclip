@@ -431,6 +431,7 @@ describe("parseExecutionDocument", () => {
 
 ## Что делать дальше
 
+* Открыть стенд: https://ai01.homio.pro/en/login
 * Evidence: https://atlas.homio.pro/app/output/example.png
 
 ## Изменения и diff
@@ -450,6 +451,7 @@ describe("parseExecutionDocument", () => {
     expect(parsed.nextStep).toContain("Открой стенд");
     expect(parsed.scenarioStatus).toBe("passed");
     expect(parsed.turnLabel).toBe("TURN 1");
+    expect(parsed.standUrl).toBe("https://ai01.homio.pro/en/login");
     expect(parsed.evidenceUrl).toContain("/app/output/example.png");
     expect(parsed.executorSummary).toContain("fullscreen");
     expect(parsed.verifierScope).toBe("Project layouts surface regression");

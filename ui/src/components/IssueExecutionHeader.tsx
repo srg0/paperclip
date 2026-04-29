@@ -146,7 +146,7 @@ function StageDot({ stage, isLast }: { stage: IssueExecutionHeaderStage; isLast:
   const active = stage.state === "running" || stage.state === "retrying" || stage.state === "looping";
   const animated = active || stage.state === "passed";
   return (
-    <div className="flex w-[216px] min-w-[216px] shrink-0 snap-start items-start sm:w-[240px] sm:min-w-[240px]">
+    <div className="flex w-[176px] min-w-[176px] shrink-0 snap-start items-start sm:w-[192px] sm:min-w-[192px]">
       <div className="relative w-full">
         <div className={stageShellClasses(stage.state, active)}>
           {animated ? (
@@ -208,9 +208,8 @@ function StageDot({ stage, isLast }: { stage: IssueExecutionHeaderStage; isLast:
               </div>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                 {stage.ownerIcon ? <AgentIcon icon={stage.ownerIcon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                <span className="min-w-0 leading-5">{stage.ownerLabel}</span>
+                <span className="min-w-0 truncate leading-5">{stage.ownerLabel}</span>
               </div>
-              {stage.note ? <div className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">{stage.note}</div> : null}
             </div>
           </div>
         </div>
@@ -278,10 +277,10 @@ export function IssueExecutionHeader({
         </div>
       </div>
 
-      <div className="overflow-x-auto border-b border-border/70 bg-gradient-to-r from-transparent via-muted/[0.06] to-transparent px-4 py-4 sm:px-5">
+      <div className="overflow-x-auto border-b border-border/70 bg-muted/[0.03] px-4 py-3 sm:px-5">
         <div
           data-testid="issue-execution-stage-rail"
-          className="flex min-w-max snap-x snap-mandatory items-start gap-3 pb-1 xl:snap-none"
+          className="flex min-w-max snap-x snap-mandatory items-start gap-2 pb-1 xl:snap-none"
         >
           {model.stages.map((stage, index) => (
             <div
@@ -295,12 +294,12 @@ export function IssueExecutionHeader({
         </div>
       </div>
 
-      <Collapsible defaultOpen className="px-4 py-4 sm:px-5">
+      <Collapsible className="px-4 py-4 sm:px-5">
         <CollapsibleTrigger className="flex w-full items-center justify-between text-left">
           <div>
-            <div className="text-sm font-semibold text-foreground">Execution drill-down</div>
+            <div className="text-sm font-semibold text-foreground">Details</div>
             <div className="text-xs text-muted-foreground">
-              Only the compact status story, milestones, and proof links for this lineage.
+              Milestones, proof links, and retry data.
             </div>
           </div>
           <ChevronDown className="h-4 w-4 text-muted-foreground" />

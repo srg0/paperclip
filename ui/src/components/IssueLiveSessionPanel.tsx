@@ -618,11 +618,11 @@ export function IssueLiveSessionPanel({ issueId, companyId, atlasExecutionFallba
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/[0.08] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-700 dark:text-cyan-300">
               <Sparkles className="h-3.5 w-3.5" />
-              Conversation
+              Task chat
             </div>
-            <div className="mt-3 text-sm font-semibold">What you asked, what Atlas answered, and what happened next</div>
+            <div className="mt-3 text-sm font-semibold">Latest request, Atlas answer, and proof links</div>
             <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
-              The top tab reads like a normal chat. The second tab keeps the technical execution detail when you need to inspect the raw projection.
+              Details keeps raw execution data for debugging.
             </div>
           </div>
 

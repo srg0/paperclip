@@ -123,7 +123,7 @@ describe("IssueLiveSessionPanel", () => {
       );
     });
 
-    expect(container.textContent).toContain("Conversation");
+    expect(container.textContent).toContain("Task chat");
     expect(container.textContent).toContain("Settled");
     expect(container.textContent).toContain("1 run");
     expect(container.textContent).toContain("Atlas execution");
