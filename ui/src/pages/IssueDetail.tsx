@@ -861,6 +861,40 @@ export function IssueDetail() {
       return bTime - aTime;
     })[0] ?? null;
   }, [timelineRuns]);
+  const latestAtlasBridgeActivity = useMemo(() => {
+    return [...(activity ?? [])]
+      .filter((evt) => (
+        evt.action.includes("Atlas Bridge")
+        || evt.action.includes("Atlas Executor")
+        || evt.action.includes("Переход состояния стенда")
+      ))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null;
+  }, [activity]);
+  const latestAtlasBridgeDetails = asRecord(latestAtlasBridgeActivity?.details);
+  const latestAtlasTurnLabel =
+    (typeof latestAtlasBridgeDetails?.turnLabel === "string" ? latestAtlasBridgeDetails.turnLabel : null)
+    ?? parsedExecutionDocument.turnLabel
+    ?? executionHeaderModel?.turnLabel
+    ?? null;
+  const latestAtlasIntent =
+    typeof latestAtlasBridgeDetails?.intent === "string" ? latestAtlasBridgeDetails.intent : null;
+  const dashboardActiveAgentLabel =
+    pendingFollowupStatus?.title
+    ?? executionHeaderModel?.currentAgent
+    ?? latestLiveRun?.agentName
+    ?? "No active agent";
+  const dashboardActiveAgentDetail =
+    pendingFollowupStatus?.detail
+    ?? pendingFollowupStatus?.summary
+    ?? executionHeaderModel?.nextStep
+    ?? latestAtlasBridgeActivity?.action
+    ?? "No active Atlas work is visible for this issue.";
+  const dashboardRuntimeVector = [
+    parsedExecutionDocument.executionState ? `execution ${parsedExecutionDocument.executionState}` : null,
+    parsedExecutionDocument.attachmentState ? `attach ${parsedExecutionDocument.attachmentState}` : null,
+    latestAtlasTurnLabel,
+    latestAtlasIntent ? `intent ${latestAtlasIntent}` : null,
+  ].filter(Boolean).join(" · ");
   const dashboardState = useMemo(() => {
     if (pendingFollowupStatus?.state === "blocked" || pendingFollowupStatus?.state === "failed") {
       return {
@@ -1674,13 +1708,16 @@ export function IssueDetail() {
                   </div>
 
                   <div className="rounded-xl border border-border bg-background/70 p-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Pending work</div>
-                    <div className="mt-2 text-sm font-semibold text-foreground">
-                      {queuedComments.length > 0 ? `${queuedComments.length} queued` : "No queue"}
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {(linkedApprovals?.length ?? 0) > 0 ? `${linkedApprovals?.length ?? 0} approvals need attention` : "No approval blockers"}
-                    </div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Active agent</div>
+                    <div className="mt-2 text-sm font-semibold text-foreground">{dashboardActiveAgentLabel}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{dashboardActiveAgentDetail}</div>
+                    {queuedComments.length > 0 || (linkedApprovals?.length ?? 0) > 0 ? (
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        {queuedComments.length > 0 ? `${queuedComments.length} queued comment${queuedComments.length === 1 ? "" : "s"}` : null}
+                        {queuedComments.length > 0 && (linkedApprovals?.length ?? 0) > 0 ? " · " : null}
+                        {(linkedApprovals?.length ?? 0) > 0 ? `${linkedApprovals?.length ?? 0} approval blocker${(linkedApprovals?.length ?? 0) === 1 ? "" : "s"}` : null}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="rounded-xl border border-border bg-background/70 p-3">
@@ -1713,10 +1750,12 @@ export function IssueDetail() {
                   </div>
 
                   <div className="rounded-xl border border-border bg-background/70 p-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Latest trace</div>
-                    <div className="mt-2 text-sm font-semibold text-foreground">{dashboardProjectionLabel}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Latest bridge event</div>
+                    <div className="mt-2 text-sm font-semibold text-foreground">
+                      {latestAtlasBridgeActivity ? relativeTime(latestAtlasBridgeActivity.createdAt) : dashboardProjectionLabel}
+                    </div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      {latestActivityAt ? `Latest activity ${relativeTime(latestActivityAt)}` : "No activity yet"}
+                      {dashboardRuntimeVector || (latestActivityAt ? `Latest activity ${relativeTime(latestActivityAt)}` : "No activity yet")}
                     </div>
                     {latestTimelineRun ? (
                       <div className="mt-2 text-xs text-muted-foreground">
