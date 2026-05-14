@@ -1602,6 +1602,7 @@ export function IssueDetail() {
           projectKey={currentProject?.urlKey ?? null}
           projectName={currentProject?.name ?? null}
           executionWorkspace={issue.currentExecutionWorkspace ?? null}
+          issueStatus={issue.status}
           enabled={shouldPreferKannaSurface}
           fallback={(
             <>
