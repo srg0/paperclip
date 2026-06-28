@@ -1802,6 +1802,7 @@ export function issueRoutes(
       reason: "issue_assigned",
       mutation: "create",
       contextSource: "issue.create",
+      dependencyBlocked: Array.isArray(req.body.blockedByIssueIds) && req.body.blockedByIssueIds.length > 0,
       requestedByActorType: actor.actorType,
       requestedByActorId: actor.actorId,
     });

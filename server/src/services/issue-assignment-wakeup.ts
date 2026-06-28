@@ -24,11 +24,13 @@ export function queueIssueAssignmentWakeup(input: {
   reason: string;
   mutation: string;
   contextSource: string;
+  dependencyBlocked?: boolean;
   requestedByActorType?: "user" | "agent" | "system";
   requestedByActorId?: string | null;
   rethrowOnError?: boolean;
 }) {
   if (!input.issue.assigneeAgentId || input.issue.status === "backlog") return;
+  if (input.dependencyBlocked) return;
 
   return input.heartbeat
     .wakeup(input.issue.assigneeAgentId, {
