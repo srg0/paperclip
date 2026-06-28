@@ -19,6 +19,7 @@ const mockIssueService = vi.hoisted(() => ({
 
 vi.mock("../services/activity.js", () => ({
   activityService: () => mockActivityService,
+  normalizeActivityLimit: (limit: number | undefined) => (Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.floor(limit ?? 100))) : 100),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -64,7 +65,7 @@ describe("activity routes", () => {
     expect(res.status).toBe(200);
     expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-475");
     expect(mockIssueService.getById).not.toHaveBeenCalled();
-    expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("company-1", "issue-uuid-1");
+    expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("company-1", "issue-uuid-1", { limit: 100 });
     expect(res.body).toEqual([{ runId: "run-1" }]);
   });
 });

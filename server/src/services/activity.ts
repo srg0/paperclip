@@ -9,8 +9,98 @@ export interface ActivityFilters {
   entityId?: string;
 }
 
+const DEFAULT_ACTIVITY_LIMIT = 100;
+const MAX_ACTIVITY_LIMIT = 500;
+const RUN_RESULT_TEXT_MAX_CHARS = 4000;
+const RUN_RESULT_OUTPUT_MAX_CHARS = 2000;
+
+export function normalizeActivityLimit(limit: number | undefined) {
+  if (!Number.isFinite(limit)) return DEFAULT_ACTIVITY_LIMIT;
+  return Math.max(1, Math.min(MAX_ACTIVITY_LIMIT, Math.floor(limit ?? DEFAULT_ACTIVITY_LIMIT)));
+}
+
 export function activityService(db: Db) {
   const issueIdAsText = sql<string>`${issues.id}::text`;
+  const summarizedUsageJson = sql<Record<string, unknown> | null>`
+    case
+      when ${heartbeatRuns.usageJson} is null then null
+      else jsonb_strip_nulls(jsonb_build_object(
+        'inputTokens', coalesce(${heartbeatRuns.usageJson} -> 'inputTokens', ${heartbeatRuns.usageJson} -> 'input_tokens'),
+        'input_tokens', coalesce(${heartbeatRuns.usageJson} -> 'input_tokens', ${heartbeatRuns.usageJson} -> 'inputTokens'),
+        'outputTokens', coalesce(${heartbeatRuns.usageJson} -> 'outputTokens', ${heartbeatRuns.usageJson} -> 'output_tokens'),
+        'output_tokens', coalesce(${heartbeatRuns.usageJson} -> 'output_tokens', ${heartbeatRuns.usageJson} -> 'outputTokens'),
+        'cachedInputTokens', coalesce(
+          ${heartbeatRuns.usageJson} -> 'cachedInputTokens',
+          ${heartbeatRuns.usageJson} -> 'cached_input_tokens',
+          ${heartbeatRuns.usageJson} -> 'cache_read_input_tokens'
+        ),
+        'cached_input_tokens', coalesce(
+          ${heartbeatRuns.usageJson} -> 'cached_input_tokens',
+          ${heartbeatRuns.usageJson} -> 'cachedInputTokens',
+          ${heartbeatRuns.usageJson} -> 'cache_read_input_tokens'
+        ),
+        'cache_read_input_tokens', coalesce(
+          ${heartbeatRuns.usageJson} -> 'cache_read_input_tokens',
+          ${heartbeatRuns.usageJson} -> 'cached_input_tokens',
+          ${heartbeatRuns.usageJson} -> 'cachedInputTokens'
+        ),
+        'billingType', coalesce(${heartbeatRuns.usageJson} -> 'billingType', ${heartbeatRuns.usageJson} -> 'billing_type'),
+        'billing_type', coalesce(${heartbeatRuns.usageJson} -> 'billing_type', ${heartbeatRuns.usageJson} -> 'billingType'),
+        'costUsd', coalesce(
+          ${heartbeatRuns.usageJson} -> 'costUsd',
+          ${heartbeatRuns.usageJson} -> 'cost_usd',
+          ${heartbeatRuns.usageJson} -> 'total_cost_usd'
+        ),
+        'cost_usd', coalesce(
+          ${heartbeatRuns.usageJson} -> 'cost_usd',
+          ${heartbeatRuns.usageJson} -> 'costUsd',
+          ${heartbeatRuns.usageJson} -> 'total_cost_usd'
+        ),
+        'total_cost_usd', coalesce(
+          ${heartbeatRuns.usageJson} -> 'total_cost_usd',
+          ${heartbeatRuns.usageJson} -> 'cost_usd',
+          ${heartbeatRuns.usageJson} -> 'costUsd'
+        )
+      ))
+    end
+  `.as("usageJson");
+  const summarizedResultJson = sql<Record<string, unknown> | null>`
+    case
+      when ${heartbeatRuns.resultJson} is null then null
+      else jsonb_strip_nulls(jsonb_build_object(
+        'summary', left(${heartbeatRuns.resultJson} ->> 'summary', ${RUN_RESULT_TEXT_MAX_CHARS}),
+        'result', left(${heartbeatRuns.resultJson} ->> 'result', ${RUN_RESULT_TEXT_MAX_CHARS}),
+        'message', left(${heartbeatRuns.resultJson} ->> 'message', ${RUN_RESULT_TEXT_MAX_CHARS}),
+        'error', left(${heartbeatRuns.resultJson} ->> 'error', ${RUN_RESULT_TEXT_MAX_CHARS}),
+        'stdout', left(${heartbeatRuns.resultJson} ->> 'stdout', ${RUN_RESULT_OUTPUT_MAX_CHARS}),
+        'stderr', left(${heartbeatRuns.resultJson} ->> 'stderr', ${RUN_RESULT_OUTPUT_MAX_CHARS}),
+        'billingType', coalesce(${heartbeatRuns.resultJson} -> 'billingType', ${heartbeatRuns.resultJson} -> 'billing_type'),
+        'billing_type', coalesce(${heartbeatRuns.resultJson} -> 'billing_type', ${heartbeatRuns.resultJson} -> 'billingType'),
+        'costUsd', coalesce(
+          ${heartbeatRuns.resultJson} -> 'costUsd',
+          ${heartbeatRuns.resultJson} -> 'cost_usd',
+          ${heartbeatRuns.resultJson} -> 'total_cost_usd'
+        ),
+        'cost_usd', coalesce(
+          ${heartbeatRuns.resultJson} -> 'cost_usd',
+          ${heartbeatRuns.resultJson} -> 'costUsd',
+          ${heartbeatRuns.resultJson} -> 'total_cost_usd'
+        ),
+        'total_cost_usd', coalesce(
+          ${heartbeatRuns.resultJson} -> 'total_cost_usd',
+          ${heartbeatRuns.resultJson} -> 'cost_usd',
+          ${heartbeatRuns.resultJson} -> 'costUsd'
+        ),
+        'stopReason', ${heartbeatRuns.resultJson} -> 'stopReason',
+        'effectiveTimeoutSec', ${heartbeatRuns.resultJson} -> 'effectiveTimeoutSec',
+        'effectiveTimeoutMs', ${heartbeatRuns.resultJson} -> 'effectiveTimeoutMs',
+        'timeoutConfigured', ${heartbeatRuns.resultJson} -> 'timeoutConfigured',
+        'timeoutSource', ${heartbeatRuns.resultJson} -> 'timeoutSource',
+        'timeoutFired', ${heartbeatRuns.resultJson} -> 'timeoutFired'
+      ))
+    end
+  `.as("resultJson");
+
   return {
     list: (filters: ActivityFilters) => {
       const conditions = [eq(activityLog.companyId, filters.companyId)];
@@ -60,7 +150,7 @@ export function activityService(db: Db) {
         )
         .orderBy(desc(activityLog.createdAt)),
 
-    runsForIssue: (companyId: string, issueId: string) =>
+    runsForIssue: (companyId: string, issueId: string, options?: { limit?: number }) =>
       db
         .select({
           runId: heartbeatRuns.id,
@@ -70,8 +160,8 @@ export function activityService(db: Db) {
           finishedAt: heartbeatRuns.finishedAt,
           createdAt: heartbeatRuns.createdAt,
           invocationSource: heartbeatRuns.invocationSource,
-          usageJson: heartbeatRuns.usageJson,
-          resultJson: heartbeatRuns.resultJson,
+          usageJson: summarizedUsageJson,
+          resultJson: summarizedResultJson,
         })
         .from(heartbeatRuns)
         .where(
@@ -90,7 +180,8 @@ export function activityService(db: Db) {
             ),
           ),
         )
-        .orderBy(desc(heartbeatRuns.createdAt)),
+        .orderBy(desc(heartbeatRuns.createdAt))
+        .limit(normalizeActivityLimit(options?.limit)),
 
     issuesForRun: async (runId: string) => {
       const run = await db

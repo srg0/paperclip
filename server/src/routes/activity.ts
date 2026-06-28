@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { validate } from "../middleware/validate.js";
-import { activityService } from "../services/activity.js";
+import { activityService, normalizeActivityLimit } from "../services/activity.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 import { issueService } from "../services/index.js";
 import { sanitizeRecord } from "../redaction.js";
@@ -74,7 +74,9 @@ export function activityRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const result = await svc.runsForIssue(issue.companyId, issue.id);
+    const result = await svc.runsForIssue(issue.companyId, issue.id, {
+      limit: normalizeActivityLimit(Number(req.query.limit)),
+    });
     res.json(result);
   });
 
