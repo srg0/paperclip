@@ -37,6 +37,22 @@ describe("queueIssueAssignmentWakeup", () => {
     expect(wakeup).not.toHaveBeenCalled();
   });
 
+  it("does not wake terminal issues", async () => {
+    const wakeup = vi.fn().mockResolvedValue(null);
+
+    for (const status of ["done", "cancelled"]) {
+      await queueIssueAssignmentWakeup({
+        heartbeat: { wakeup },
+        issue: { id: `issue-${status}`, assigneeAgentId: "agent-1", status },
+        reason: "issue_assigned",
+        mutation: "create",
+        contextSource: "issue.create",
+      });
+    }
+
+    expect(wakeup).not.toHaveBeenCalled();
+  });
+
   it("does not wake dependency-blocked issues", async () => {
     const wakeup = vi.fn().mockResolvedValue(null);
 
