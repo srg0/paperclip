@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const issueGetByIdMock = vi.fn();
+const issueListMock = vi.fn();
 const upsertIssueDocumentMock = vi.fn();
 const executionWorkspaceGetByIdMock = vi.fn();
 
@@ -19,6 +20,7 @@ vi.mock("../services/projects.js", () => ({
 vi.mock("../services/issues.js", () => ({
   issueService: () => ({
     getById: issueGetByIdMock,
+    list: issueListMock,
   }),
 }));
 
@@ -86,6 +88,7 @@ describe("plugin host issue document forwarding", () => {
       id: "issue-1",
       companyId: "company-1",
     });
+    issueListMock.mockResolvedValue([]);
     executionWorkspaceGetByIdMock.mockResolvedValue(null);
     upsertIssueDocumentMock.mockResolvedValue({
       document: {
@@ -177,5 +180,39 @@ describe("plugin host issue document forwarding", () => {
         branchName: "feature/issue",
       }),
     }));
+  });
+
+  it("does not apply plugin-side windowing after issueService pagination", async () => {
+    issueListMock.mockResolvedValue([
+      { id: "issue-201", companyId: "company-1" },
+      { id: "issue-202", companyId: "company-1" },
+    ]);
+
+    const { buildHostServices } = await import("../services/plugin-host-services.js");
+
+    const hostServices = buildHostServices(
+      {} as any,
+      "plugin-1",
+      "homio.atlas-bridge",
+      {
+        forPlugin: () => ({
+          publish: vi.fn(),
+          subscribe: vi.fn(() => ({ unsubscribe: vi.fn() })),
+        }),
+      } as any,
+    );
+
+    const issues = await hostServices.issues.list({
+      companyId: "company-1",
+      limit: 2,
+      offset: 200,
+    } as any);
+
+    expect(issueListMock).toHaveBeenCalledWith("company-1", expect.objectContaining({
+      companyId: "company-1",
+      limit: 2,
+      offset: 200,
+    }));
+    expect(issues.map((issue) => issue.id)).toEqual(["issue-201", "issue-202"]);
   });
 });

@@ -308,6 +308,60 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(result.map((issue) => issue.id)).toEqual([linkedIssueId]);
   });
 
+  it("applies limit and offset before returning issue rows", async () => {
+    const companyId = randomUUID();
+    const issueIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: issueIds[0],
+        companyId,
+        title: "Oldest issue",
+        status: "todo",
+        priority: "medium",
+        updatedAt: new Date("2026-03-26T10:00:00.000Z"),
+      },
+      {
+        id: issueIds[1],
+        companyId,
+        title: "Third newest issue",
+        status: "todo",
+        priority: "medium",
+        updatedAt: new Date("2026-03-26T11:00:00.000Z"),
+      },
+      {
+        id: issueIds[2],
+        companyId,
+        title: "Second newest issue",
+        status: "todo",
+        priority: "medium",
+        updatedAt: new Date("2026-03-26T12:00:00.000Z"),
+      },
+      {
+        id: issueIds[3],
+        companyId,
+        title: "Newest issue",
+        status: "todo",
+        priority: "medium",
+        updatedAt: new Date("2026-03-26T13:00:00.000Z"),
+      },
+    ]);
+
+    const result = await svc.list(companyId, {
+      limit: 2,
+      offset: 1,
+    });
+
+    expect(result.map((issue) => issue.id)).toEqual([issueIds[2], issueIds[1]]);
+  });
+
   it("hides archived inbox issues until new external activity arrives", async () => {
     const companyId = randomUUID();
     const userId = "user-1";

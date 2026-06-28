@@ -1114,6 +1114,8 @@ export function issueRoutes(
       includeRoutineExecutions:
         req.query.includeRoutineExecutions === "true" || req.query.includeRoutineExecutions === "1",
       q: req.query.q as string | undefined,
+      limit: req.query.limit as string | undefined,
+      offset: req.query.offset as string | undefined,
     });
     res.json(result);
   });

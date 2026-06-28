@@ -78,6 +78,8 @@ export interface IssueFilters {
   originId?: string;
   includeRoutineExecutions?: boolean;
   q?: string;
+  limit?: number | string | null;
+  offset?: number | string | null;
 }
 
 type IssueRow = typeof issues.$inferSelect;
@@ -123,6 +125,19 @@ const ZERO_WIDTH_CHAR_REGEX = /[\u200B-\u200D\u2060\uFEFF]/g;
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
+}
+
+function parseIssuePageValue(value: number | string | null | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.floor(parsed));
+    }
+  }
+  return null;
 }
 
 export function sanitizeIssueCommentBody(body: string): string {
@@ -746,11 +761,21 @@ export function issueService(db: Db) {
           ELSE 6
         END
       `;
-      const rows = await db
+      const pageLimit = parseIssuePageValue(filters?.limit);
+      const pageOffset = parseIssuePageValue(filters?.offset) ?? 0;
+      const query = db
         .select()
         .from(issues)
         .where(and(...conditions))
-        .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt));
+        .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt))
+        .$dynamic();
+      if (pageLimit != null) {
+        query.limit(pageLimit);
+      }
+      if (pageOffset > 0) {
+        query.offset(pageOffset);
+      }
+      const rows = await query;
       const withLabels = await withIssueLabels(db, rows);
       const runMap = await activeRunMapForIssues(db, withLabels);
       const withRuns = withActiveRuns(withLabels, runMap);
