@@ -280,6 +280,19 @@ async function executeProcess(input: {
   return proc;
 }
 
+function extractDubiousOwnershipPath(message: string): string | null {
+  const match = message.match(/detected dubious ownership in repository at ['"]([^'"]+)['"]/i);
+  return match?.[1] ? path.resolve(match[1]) : null;
+}
+
+async function markGitDirectorySafe(directory: string) {
+  await executeProcess({
+    command: "git",
+    args: ["config", "--global", "--add", "safe.directory", directory],
+    cwd: "/",
+  });
+}
+
 async function runGit(args: string[], cwd: string): Promise<string> {
   const proc = await executeProcess({
     command: "git",
@@ -287,7 +300,21 @@ async function runGit(args: string[], cwd: string): Promise<string> {
     cwd,
   });
   if (proc.code !== 0) {
-    throw new Error(proc.stderr.trim() || proc.stdout.trim() || `git ${args.join(" ")} failed`);
+    const message = proc.stderr.trim() || proc.stdout.trim() || `git ${args.join(" ")} failed`;
+    const dubiousPath = extractDubiousOwnershipPath(message);
+    if (dubiousPath) {
+      await markGitDirectorySafe(dubiousPath);
+      const retry = await executeProcess({
+        command: "git",
+        args,
+        cwd,
+      });
+      if (retry.code === 0) {
+        return retry.stdout.trim();
+      }
+      throw new Error(retry.stderr.trim() || retry.stdout.trim() || `git ${args.join(" ")} failed`);
+    }
+    throw new Error(message);
   }
   return proc.stdout.trim();
 }

@@ -46,7 +46,20 @@ async function pathExists(value: string | null | undefined) {
 }
 
 async function runGit(args: string[], cwd: string) {
-  return await execFileAsync("git", ["-C", cwd, ...args], { cwd });
+  try {
+    return await execFileAsync("git", ["-C", cwd, ...args], { cwd });
+  } catch (error) {
+    const stderr = isRecord(error) && typeof error.stderr === "string" ? error.stderr : "";
+    const stdout = isRecord(error) && typeof error.stdout === "string" ? error.stdout : "";
+    const message = `${stderr}\n${stdout}`;
+    const match = message.match(/detected dubious ownership in repository at ['"]([^'"]+)['"]/i);
+    const dubiousPath = match?.[1] ? path.resolve(match[1]) : null;
+    if (!dubiousPath) {
+      throw error;
+    }
+    await execFileAsync("git", ["config", "--global", "--add", "safe.directory", dubiousPath], { cwd: "/" });
+    return await execFileAsync("git", ["-C", cwd, ...args], { cwd });
+  }
 }
 
 async function inspectGitCloseReadiness(workspace: ExecutionWorkspace): Promise<{
