@@ -27,6 +27,7 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companies, pluginLogs, pluginWebhookDeliveries } from "@paperclipai/db";
 import type {
+  PluginRecord,
   PluginStatus,
   PaperclipPluginManifestV1,
   PluginBridgeErrorCode,
@@ -47,9 +48,10 @@ import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
 import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@paperclipai/plugin-sdk";
-import { forbidden } from "../errors.js";
+import { forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
+import { issueService } from "../services/issues.js";
 
 /** UI slot declaration extracted from plugin manifest */
 type PluginUiSlotDeclaration = NonNullable<NonNullable<PaperclipPluginManifestV1["ui"]>["slots"]>[number];
@@ -112,6 +114,10 @@ interface PluginHealthCheckResult {
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const AGENT_BRIDGE_ACTION_COMPANY_FALLBACK_ALLOWLIST = new Set([
+  "atlas-bridge-run-stand-deploy-request",
+]);
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
@@ -148,6 +154,32 @@ function listBundledPluginExamples(): AvailablePluginExample[] {
     if (!existsSync(absoluteLocalPath)) return [];
     return [{ ...plugin, localPath: absoluteLocalPath }];
   });
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeOptionalRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function serializePluginForAgent(plugin: PluginRecord) {
+  return {
+    id: plugin.id,
+    pluginKey: plugin.pluginKey,
+    packageName: plugin.packageName,
+    version: plugin.version,
+    apiVersion: plugin.apiVersion,
+    categories: plugin.categories,
+    manifestJson: plugin.manifestJson,
+    status: plugin.status,
+    installOrder: plugin.installOrder,
+    installedAt: plugin.installedAt,
+    updatedAt: plugin.updatedAt,
+  };
 }
 
 /**
@@ -314,21 +346,31 @@ export function pluginRoutes(
     loader,
     workerManager: bridgeDeps?.workerManager ?? webhookDeps?.workerManager,
   });
+  const issuesSvc = issueService(db);
 
-  function assertPluginBridgeAccess(req: Request, companyId: string | undefined) {
+  function assertPluginBridgeAccess(
+    req: Request,
+    companyId: string | undefined,
+    opts: { allowAgentCompanyFallback?: boolean } = {},
+  ): string | undefined {
     if (req.actor.type === "board") {
       if (companyId) {
         assertCompanyAccess(req, companyId);
       }
-      return;
+      return companyId;
     }
 
     if (req.actor.type === "agent") {
-      if (!companyId?.trim()) {
+      const effectiveCompanyId = companyId?.trim()
+        ? companyId
+        : opts.allowAgentCompanyFallback
+          ? normalizeOptionalString(req.actor.companyId) ?? undefined
+          : undefined;
+      if (!effectiveCompanyId) {
         throw forbidden("companyId is required for agent bridge access");
       }
-      assertCompanyAccess(req, companyId);
-      return;
+      assertCompanyAccess(req, effectiveCompanyId);
+      return effectiveCompanyId;
     }
 
     throw forbidden("Board or agent access required");
@@ -352,13 +394,66 @@ export function pluginRoutes(
     return undefined;
   }
 
+  function assertPluginListAccess(req: Request) {
+    if (req.actor.type === "agent" && req.actor.companyId) {
+      return;
+    }
+    assertBoard(req);
+  }
+
+  async function resolveBridgeActionIssue(issueRef: string, companyId: string) {
+    const issue = await issuesSvc.getById(issueRef)
+      ?? (/^[A-Z]+-\d+$/i.test(issueRef) ? await issuesSvc.getByIdentifier(issueRef) : null);
+    if (!issue || issue.companyId !== companyId) {
+      throw notFound("Issue not found");
+    }
+    return issue;
+  }
+
+  async function enforceAgentStandDeployActionScope(
+    req: Request,
+    key: string,
+    companyId: string | undefined,
+    params: Record<string, unknown>,
+  ) {
+    if (req.actor.type !== "agent" || !AGENT_BRIDGE_ACTION_COMPANY_FALLBACK_ALLOWLIST.has(key)) return;
+    if (!companyId) {
+      throw forbidden("Agent company scope required");
+    }
+    const issueRef = normalizeOptionalString(params.issueId);
+    if (!issueRef) {
+      throw unprocessable("Agent bridge actions require params.issueId");
+    }
+    const issue = await resolveBridgeActionIssue(issueRef, companyId);
+    const runId = normalizeOptionalString(req.actor.runId);
+    if (!runId) {
+      throw unauthorized("Agent run id required");
+    }
+    const agentId = normalizeOptionalString(req.actor.agentId);
+    if (!agentId) {
+      throw forbidden("Agent authentication required");
+    }
+    await issuesSvc.assertCheckoutOwner(issue.id, agentId, runId);
+  }
+
   function withBridgeActorParams(
     req: Request,
     params: Record<string, unknown> | undefined,
+    companyId?: string,
+    actionKey?: string,
   ): Record<string, unknown> {
     const nextParams = { ...(params ?? {}) };
     if (req.actor.type === "board" && req.actor.userId) {
       nextParams.paperclipUserId = req.actor.userId;
+    }
+    if (
+      req.actor.type === "agent" &&
+      companyId &&
+      actionKey &&
+      AGENT_BRIDGE_ACTION_COMPANY_FALLBACK_ALLOWLIST.has(actionKey) &&
+      !normalizeOptionalString(nextParams.companyId)
+    ) {
+      nextParams.companyId = companyId;
     }
     return nextParams;
   }
@@ -418,9 +513,9 @@ export function pluginRoutes(
    *   not a recognised status string.
    *
    * Response: `PluginRecord[]`
-   */
+  */
   router.get("/plugins", async (req, res) => {
-    assertBoard(req);
+    assertPluginListAccess(req);
     const rawStatus = req.query.status;
     if (rawStatus !== undefined) {
       if (typeof rawStatus !== "string" || !(PLUGIN_STATUSES as readonly string[]).includes(rawStatus)) {
@@ -434,7 +529,7 @@ export function pluginRoutes(
     const plugins = status
       ? await registry.listByStatus(status)
       : await registry.listInstalled();
-    res.json(plugins);
+    res.json(req.actor.type === "agent" ? plugins.map(serializePluginForAgent) : plugins);
   });
 
   /**
@@ -952,7 +1047,11 @@ export function pluginRoutes(
       return;
     }
 
-    assertPluginBridgeAccess(req, resolveBridgeCompanyId(body));
+    const companyId = assertPluginBridgeAccess(req, resolveBridgeCompanyId(body), {
+      allowAgentCompanyFallback: AGENT_BRIDGE_ACTION_COMPANY_FALLBACK_ALLOWLIST.has(body.key),
+    });
+    const params = normalizeOptionalRecord(body.params) ?? {};
+    await enforceAgentStandDeployActionScope(req, body.key, companyId, params);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -960,7 +1059,7 @@ export function pluginRoutes(
         "performAction",
         {
           key: body.key,
-          params: body.params ?? {},
+          params: withBridgeActorParams(req, params, companyId, body.key),
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );
@@ -1106,7 +1205,11 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    assertPluginBridgeAccess(req, resolveBridgeCompanyId(body));
+    const companyId = assertPluginBridgeAccess(req, resolveBridgeCompanyId(body), {
+      allowAgentCompanyFallback: AGENT_BRIDGE_ACTION_COMPANY_FALLBACK_ALLOWLIST.has(key),
+    });
+    const params = normalizeOptionalRecord(body?.params) ?? {};
+    await enforceAgentStandDeployActionScope(req, key, companyId, params);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1114,7 +1217,7 @@ export function pluginRoutes(
         "performAction",
         {
           key,
-          params: withBridgeActorParams(req, body?.params),
+          params: withBridgeActorParams(req, params, companyId, key),
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );
