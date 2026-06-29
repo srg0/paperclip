@@ -814,6 +814,27 @@ function shouldRetryProcessLostRun(
   return hasIssueExecutionContext(run);
 }
 
+function isDeferredDirectedCommentWakeForStaleAssignee(input: {
+  deferred: typeof agentWakeupRequests.$inferSelect;
+  issue: Pick<typeof issues.$inferSelect, "assigneeAgentId">;
+}) {
+  const deferredPayload = parseObject(input.deferred.payload);
+  const deferredContext = parseObject(deferredPayload[DEFERRED_WAKE_CONTEXT_KEY]);
+  const directedTargetId =
+    readNonEmptyString(deferredContext.directedCommentTargetId)
+    ?? readNonEmptyString(deferredPayload.directedCommentTargetId);
+  const wakeSource =
+    readNonEmptyString(deferredContext.source)
+    ?? readNonEmptyString(deferredPayload.source);
+
+  const isDirectedCommentWake =
+    directedTargetId === input.deferred.agentId ||
+    wakeSource === "issue.comment.directed" ||
+    wakeSource === "issue.comment.reassign";
+
+  return isDirectedCommentWake && input.issue.assigneeAgentId !== input.deferred.agentId;
+}
+
 // A positive liveness check means some process currently owns the PID.
 // On Linux, PIDs can be recycled, so this is a best-effort signal rather
 // than proof that the original child is still alive.
@@ -3062,6 +3083,7 @@ export function heartbeatService(db: Db) {
         .select({
           id: issues.id,
           companyId: issues.companyId,
+          assigneeAgentId: issues.assigneeAgentId,
         })
         .from(issues)
         .where(and(eq(issues.companyId, run.companyId), eq(issues.executionRunId, run.id)))
@@ -3095,6 +3117,21 @@ export function heartbeatService(db: Db) {
           .then((rows) => rows[0] ?? null);
 
         if (!deferred) return null;
+
+        if (isDeferredDirectedCommentWakeForStaleAssignee({ deferred, issue })) {
+          const now = new Date();
+          await tx
+            .update(agentWakeupRequests)
+            .set({
+              status: "skipped",
+              reason: "stale_directed_comment_target",
+              finishedAt: now,
+              error: "Deferred directed wake skipped: issue is no longer assigned to the target agent",
+              updatedAt: now,
+            })
+            .where(eq(agentWakeupRequests.id, deferred.id));
+          continue;
+        }
 
         const deferredAgent = await tx
           .select()

@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
+  agentRuntimeState,
   agentWakeupRequests,
+  companySkills,
   companies,
   createDb,
   heartbeatRunEvents,
@@ -34,6 +36,22 @@ function spawnAliveProcess() {
   });
 }
 
+async function waitForRunToLeaveActive(
+  db: ReturnType<typeof createDb>,
+  runId: string,
+) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const run = await db
+      .select({ status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    if (run && run.status !== "queued" && run.status !== "running") return run.status;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return null;
+}
+
 describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
@@ -55,6 +73,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
+    await db.delete(agentRuntimeState);
+    await db.delete(companySkills);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -380,6 +400,113 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .where(eq(agentWakeupRequests.agentId, agentId));
     expect(wakes.some((row) => row.status === "coalesced")).toBe(false);
     expect(wakes.some((row) => row.status === "deferred_issue_execution")).toBe(true);
+  });
+
+  it("skips a stale directed comment wake before promoting the current assignee wake", async () => {
+    const { companyId, agentId: verifierAgentId, runId, issueId } = await seedRunFixture({
+      agentStatus: "active",
+      runStatus: "running",
+    });
+    const deliveryAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: deliveryAgentId,
+      companyId,
+      name: "Delivery Agent",
+      role: "engineer",
+      status: "active",
+      adapterType: "process",
+      adapterConfig: { command: process.execPath, args: ["-e", ""], timeoutSec: 5 },
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.wakeup(verifierAgentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_commented",
+      payload: {
+        issueId,
+        commentId: randomUUID(),
+        mutation: "comment",
+      },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_commented",
+        source: "issue.comment.directed",
+        directedCommentTargetId: verifierAgentId,
+      },
+    });
+
+    await db
+      .update(issues)
+      .set({
+        assigneeAgentId: deliveryAgentId,
+        updatedAt: new Date(),
+      })
+      .where(eq(issues.id, issueId));
+
+    await heartbeat.wakeup(deliveryAgentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_assigned",
+        source: "issue.assignment",
+      },
+    });
+
+    const cancelled = await heartbeat.cancelRun(runId);
+    expect(cancelled?.status).toBe("cancelled");
+
+    const verifierWake = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          eq(agentWakeupRequests.agentId, verifierAgentId),
+          eq(agentWakeupRequests.reason, "stale_directed_comment_target"),
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+    expect(verifierWake?.status).toBe("skipped");
+    expect(verifierWake?.error).toContain("issue is no longer assigned");
+
+    const deliveryWake = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(and(eq(agentWakeupRequests.agentId, deliveryAgentId), eq(agentWakeupRequests.reason, "issue_execution_promoted")))
+      .then((rows) => rows[0] ?? null);
+    expect(deliveryWake?.runId).toBeTruthy();
+    const deliveryRunStatus = await waitForRunToLeaveActive(db, deliveryWake?.runId ?? "");
+    expect(deliveryRunStatus).toBe("succeeded");
+
+    const deliveryRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, deliveryWake?.runId ?? ""))
+      .then((rows) => rows[0] ?? null);
+    expect(deliveryRun).toBeTruthy();
+    expect(deliveryRun?.agentId).toBe(deliveryAgentId);
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId === null || issue?.executionRunId === deliveryRun?.id).toBe(true);
+    expect(issue?.executionAgentNameKey === null || issue?.executionAgentNameKey === "delivery agent").toBe(true);
+
+    const pendingDeferred = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.status, "deferred_issue_execution"));
+    expect(pendingDeferred).toHaveLength(0);
   });
 
   it("does not coalesce workspace reroute follow-up into a queued issue execution", async () => {
