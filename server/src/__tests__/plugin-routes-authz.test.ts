@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockRegistry = vi.hoisted(() => ({
   getById: vi.fn(),
   getByKey: vi.fn(),
+  listByStatus: vi.fn(),
+  listInstalled: vi.fn(),
   upsertConfig: vi.fn(),
 }));
 
@@ -16,12 +18,22 @@ const mockLifecycle = vi.hoisted(() => ({
   disable: vi.fn(),
 }));
 
+const mockIssueService = vi.hoisted(() => ({
+  getById: vi.fn(),
+  getByIdentifier: vi.fn(),
+  assertCheckoutOwner: vi.fn(),
+}));
+
 vi.mock("../services/plugin-registry.js", () => ({
   pluginRegistryService: () => mockRegistry,
 }));
 
 vi.mock("../services/plugin-lifecycle.js", () => ({
   pluginLifecycleManager: () => mockLifecycle,
+}));
+
+vi.mock("../services/issues.js", () => ({
+  issueService: () => mockIssueService,
 }));
 
 vi.mock("../services/activity-log.js", () => ({
@@ -88,6 +100,7 @@ const companyB = "33333333-3333-4333-8333-333333333333";
 const agentA = "44444444-4444-4444-8444-444444444444";
 const runA = "55555555-5555-4555-8555-555555555555";
 const projectA = "66666666-6666-4666-8666-666666666666";
+const issueA = "77777777-7777-4777-8777-777777777777";
 const pluginId = "11111111-1111-4111-8111-111111111111";
 
 function boardActor(overrides: Record<string, unknown> = {}) {
@@ -97,6 +110,17 @@ function boardActor(overrides: Record<string, unknown> = {}) {
     source: "session",
     isInstanceAdmin: false,
     companyIds: [companyA],
+    ...overrides,
+  };
+}
+
+function agentActor(overrides: Record<string, unknown> = {}) {
+  return {
+    type: "agent",
+    agentId: agentA,
+    companyId: companyA,
+    runId: runA,
+    source: "agent_jwt",
     ...overrides,
   };
 }
@@ -457,6 +481,119 @@ describe.sequential("plugin tool and bridge authz", () => {
         projectId: projectA,
       },
     );
+  });
+
+  it("allows agents to discover installed plugins without management-only fields", async () => {
+    const installedAt = new Date("2026-06-29T00:00:00.000Z");
+    const updatedAt = new Date("2026-06-29T00:10:00.000Z");
+    mockRegistry.listInstalled.mockResolvedValue([
+      {
+        id: pluginId,
+        pluginKey: "homio.atlas-bridge",
+        packageName: "@homio/atlas-bridge-plugin",
+        version: "0.0.144",
+        apiVersion: 1,
+        categories: ["automation"],
+        manifestJson: { id: "homio.atlas-bridge", version: "0.0.144" },
+        status: "ready",
+        installOrder: 1,
+        packagePath: "/private/plugin/path",
+        lastError: "operator-only detail",
+        installedAt,
+        updatedAt,
+      },
+    ]);
+
+    const { app } = await createApp(agentActor());
+    const res = await request(app)
+      .get("/api/plugins")
+      .query({ limit: "100" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      {
+        id: pluginId,
+        pluginKey: "homio.atlas-bridge",
+        packageName: "@homio/atlas-bridge-plugin",
+        version: "0.0.144",
+        apiVersion: 1,
+        categories: ["automation"],
+        manifestJson: { id: "homio.atlas-bridge", version: "0.0.144" },
+        status: "ready",
+        installOrder: 1,
+        installedAt: installedAt.toISOString(),
+        updatedAt: updatedAt.toISOString(),
+      },
+    ]);
+  });
+
+  it("allows checked-out agents to run the stand deploy bridge action for their issue", async () => {
+    readyPlugin();
+    mockIssueService.getById.mockResolvedValue({
+      id: issueA,
+      companyId: companyA,
+      status: "in_progress",
+      assigneeAgentId: agentA,
+    });
+    mockIssueService.assertCheckoutOwner.mockResolvedValue({
+      id: issueA,
+      status: "in_progress",
+      assigneeAgentId: agentA,
+      checkoutRunId: runA,
+    });
+    const call = vi.fn().mockResolvedValue({ ok: true });
+    const { app } = await createApp(agentActor(), {}, {
+      bridgeDeps: {
+        workerManager: { call },
+      },
+    });
+
+    const res = await request(app)
+      .post(`/api/plugins/${pluginId}/actions/atlas-bridge-run-stand-deploy-request`)
+      .send({
+        params: {
+          issueId: issueA,
+          request: {
+            issueId: "AGR-145",
+            project: "agrobazar",
+            stand: "ai-hmr",
+          },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(issueA, agentA, runA);
+    expect(call).toHaveBeenCalledWith(pluginId, "performAction", {
+      key: "atlas-bridge-run-stand-deploy-request",
+      params: {
+        issueId: issueA,
+        companyId: companyA,
+        request: {
+          issueId: "AGR-145",
+          project: "agrobazar",
+          stand: "ai-hmr",
+        },
+      },
+      renderEnvironment: null,
+    });
+  });
+
+  it("rejects non-allowlisted bridge actions for agents before worker dispatch", async () => {
+    readyPlugin();
+    const call = vi.fn();
+    const { app } = await createApp(agentActor(), {}, {
+      bridgeDeps: {
+        workerManager: { call },
+      },
+    });
+
+    const res = await request(app)
+      .post(`/api/plugins/${pluginId}/actions/sync`)
+      .send({ params: { issueId: issueA } });
+
+    expect(res.status).toBe(403);
+    expect(call).not.toHaveBeenCalled();
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
   });
 
   it.each([
