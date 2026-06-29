@@ -763,17 +763,17 @@ export function issueService(db: Db) {
       `;
       const pageLimit = parseIssuePageValue(filters?.limit);
       const pageOffset = parseIssuePageValue(filters?.offset) ?? 0;
-      const query = db
+      let query = db
         .select()
         .from(issues)
         .where(and(...conditions))
         .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt))
         .$dynamic();
       if (pageLimit != null) {
-        query.limit(pageLimit);
+        query = query.limit(pageLimit);
       }
       if (pageOffset > 0) {
-        query.offset(pageOffset);
+        query = query.offset(pageOffset);
       }
       const rows = await query;
       const withLabels = await withIssueLabels(db, rows);
