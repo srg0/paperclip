@@ -42,6 +42,31 @@ const PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES = [
   "../../skills",
   "../../../../../skills",
 ];
+const USE_DETACHED_PROCESS_GROUP = process.platform !== "win32";
+
+function signalChildProcessTree(child: ChildProcess, signal: NodeJS.Signals) {
+  const pid = child.pid;
+  if (typeof pid !== "number" || pid <= 0) return;
+
+  if (USE_DETACHED_PROCESS_GROUP) {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ESRCH") return;
+      // Fall through to direct child signalling when process-group signalling
+      // is unavailable even though the platform normally supports it.
+    }
+  }
+
+  try {
+    child.kill(signal);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH") throw err;
+  }
+}
 
 export interface PaperclipSkillEntry {
   key: string;
@@ -787,6 +812,7 @@ export async function runChildProcess(
         const child = spawn(target.command, target.args, {
           cwd: opts.cwd,
           env: mergedEnv,
+          detached: USE_DETACHED_PROCESS_GROUP,
           shell: false,
           stdio: [opts.stdin != null ? "pipe" : "ignore", "pipe", "pipe"],
         }) as ChildProcessWithEvents;
@@ -809,16 +835,15 @@ export async function runChildProcess(
         let stdout = "";
         let stderr = "";
         let logChain: Promise<void> = Promise.resolve();
+        let forceKillTimeout: NodeJS.Timeout | null = null;
 
         const timeout =
           opts.timeoutSec > 0
             ? setTimeout(() => {
                 timedOut = true;
-                child.kill("SIGTERM");
-                setTimeout(() => {
-                  if (!child.killed) {
-                    child.kill("SIGKILL");
-                  }
+                signalChildProcessTree(child, "SIGTERM");
+                forceKillTimeout = setTimeout(() => {
+                  signalChildProcessTree(child, "SIGKILL");
                 }, Math.max(1, opts.graceSec) * 1000);
               }, opts.timeoutSec * 1000)
             : null;
@@ -841,6 +866,7 @@ export async function runChildProcess(
 
         child.on("error", (err: Error) => {
           if (timeout) clearTimeout(timeout);
+          if (forceKillTimeout) clearTimeout(forceKillTimeout);
           runningProcesses.delete(runId);
           const errno = (err as NodeJS.ErrnoException).code;
           const pathValue = mergedEnv.PATH ?? mergedEnv.Path ?? "";
@@ -853,6 +879,8 @@ export async function runChildProcess(
 
         child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
           if (timeout) clearTimeout(timeout);
+          if (forceKillTimeout) clearTimeout(forceKillTimeout);
+          signalChildProcessTree(child, "SIGKILL");
           runningProcesses.delete(runId);
           void logChain.finally(() => {
             resolve({
