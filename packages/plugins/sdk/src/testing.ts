@@ -674,7 +674,10 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           out = out.filter((issue) => issue.originKind === input.originKind);
         }
         if (input?.originId) out = out.filter((issue) => issue.originId === input.originId);
-        if (input?.status) out = out.filter((issue) => issue.status === input.status);
+        if (input?.status) {
+          const statuses = input.status.split(",").map((status) => status.trim()).filter(Boolean);
+          out = out.filter((issue) => statuses.includes(issue.status));
+        }
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
         return out;

@@ -310,6 +310,55 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(result.map((issue) => issue.id)).toEqual([titleMatchId, descriptionMatchId]);
   });
 
+  it("applies offset before returning issue list rows", async () => {
+    const companyId = randomUUID();
+    const newestIssueId = randomUUID();
+    const middleIssueId = randomUUID();
+    const oldestIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: newestIssueId,
+        companyId,
+        title: "Newest issue",
+        status: "todo",
+        priority: "medium",
+        updatedAt: new Date("2026-06-29T03:00:00.000Z"),
+      },
+      {
+        id: middleIssueId,
+        companyId,
+        title: "Middle issue",
+        status: "todo",
+        priority: "medium",
+        updatedAt: new Date("2026-06-29T02:00:00.000Z"),
+      },
+      {
+        id: oldestIssueId,
+        companyId,
+        title: "Oldest issue",
+        status: "todo",
+        priority: "medium",
+        updatedAt: new Date("2026-06-29T01:00:00.000Z"),
+      },
+    ]);
+
+    const result = await svc.list(companyId, {
+      status: "todo",
+      limit: 1,
+      offset: 1,
+    });
+
+    expect(result.map((issue) => issue.id)).toEqual([middleIssueId]);
+  });
+
   it("ranks comment matches ahead of description-only matches", async () => {
     const companyId = randomUUID();
     const commentMatchId = randomUUID();

@@ -353,6 +353,28 @@ export async function startServer(): Promise<StartedServer> {
         return null;
       }
     };
+
+    const getPidFromFile = (filePath: string): number | null => {
+      if (!existsSync(filePath)) return null;
+      try {
+        const pidLine = readFileSync(filePath, "utf8").split("\n")[0]?.trim();
+        const pid = Number(pidLine);
+        return Number.isInteger(pid) && pid > 0 ? pid : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const removeStaleEmbeddedPostgresStartupFile = (filePath: string) => {
+      if (!existsSync(filePath)) return;
+      const pid = getPidFromFile(filePath);
+      if (pid && isPidRunning(pid)) {
+        logger.warn(`Embedded PostgreSQL startup file is still owned by a running process; keeping it (path=${filePath}, pid=${pid})`);
+        return;
+      }
+      logger.warn(`Removing stale embedded PostgreSQL startup file (path=${filePath})`);
+      rmSync(filePath, { force: true });
+    };
   
     const runningPid = getRunningPid();
     if (runningPid) {
@@ -403,10 +425,9 @@ export async function startServer(): Promise<StartedServer> {
           logger.info(`Embedded PostgreSQL cluster already exists (${clusterVersionFile}); skipping init`);
         }
 
-        if (existsSync(postmasterPidFile)) {
-          logger.warn("Removing stale embedded PostgreSQL lock file");
-          rmSync(postmasterPidFile, { force: true });
-        }
+        removeStaleEmbeddedPostgresStartupFile(postmasterPidFile);
+        removeStaleEmbeddedPostgresStartupFile(`/tmp/.s.PGSQL.${port}`);
+        removeStaleEmbeddedPostgresStartupFile(`/tmp/.s.PGSQL.${port}.lock`);
         try {
           await embeddedPostgres.start();
         } catch (err) {
