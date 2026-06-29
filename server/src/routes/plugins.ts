@@ -36,6 +36,7 @@ import {
 } from "@paperclipai/db";
 import type {
   PluginApiRouteDeclaration,
+  PluginRecord,
   PluginStatus,
   PaperclipPluginManifestV1,
   PluginBridgeErrorCode,
@@ -64,6 +65,7 @@ import {
   assertCompanyAccess,
   assertInstanceAdmin,
   getActorInfo,
+  hasBoardOrgAccess,
 } from "./authz.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
 import { badRequest, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
@@ -137,6 +139,10 @@ const PLUGIN_SCOPED_API_RESPONSE_HEADER_ALLOWLIST = new Set([
   "x-request-id",
 ]);
 
+const AGENT_BRIDGE_ACTION_ALLOWLIST = new Set([
+  "atlas-bridge-run-stand-deploy-request",
+]);
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
@@ -181,6 +187,32 @@ function listBundledPluginExamples(): AvailablePluginExample[] {
     if (!existsSync(absoluteLocalPath)) return [];
     return [{ ...plugin, localPath: absoluteLocalPath }];
   });
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeOptionalRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function serializePluginForAgent(plugin: PluginRecord) {
+  return {
+    id: plugin.id,
+    pluginKey: plugin.pluginKey,
+    packageName: plugin.packageName,
+    version: plugin.version,
+    apiVersion: plugin.apiVersion,
+    categories: plugin.categories,
+    manifestJson: plugin.manifestJson,
+    status: plugin.status,
+    installOrder: plugin.installOrder,
+    installedAt: plugin.installedAt,
+    updatedAt: plugin.updatedAt,
+  };
 }
 
 /**
@@ -567,6 +599,89 @@ export function pluginRoutes(
     return companyId;
   }
 
+  function assertPluginListAccess(req: Request) {
+    assertAuthenticated(req);
+    if (req.actor.type === "agent" && req.actor.companyId) {
+      return;
+    }
+    if (req.actor.type === "board" && hasBoardOrgAccess(req)) {
+      return;
+    }
+    throw forbidden("Company membership, agent, or instance admin access required");
+  }
+
+  function resolveAgentBridgeCompanyScope(req: Request, companyId: unknown): string | undefined {
+    if (req.actor.type !== "agent") {
+      return assertPluginBridgeScope(req, companyId);
+    }
+
+    const actorCompanyId = normalizeOptionalString(req.actor.companyId);
+    if (!actorCompanyId) {
+      throw forbidden("Agent company scope required");
+    }
+    if (companyId === undefined || companyId === null) {
+      return actorCompanyId;
+    }
+    if (typeof companyId !== "string" || companyId.trim().length === 0) {
+      throw badRequest('"companyId" must be a non-empty string when provided');
+    }
+    assertCompanyAccess(req, companyId);
+    return actorCompanyId;
+  }
+
+  async function resolveBridgeActionIssue(issueRef: string, companyId: string) {
+    const issue = await issuesSvc.getById(issueRef)
+      ?? (/^[A-Z]+-\d+$/i.test(issueRef) ? await issuesSvc.getByIdentifier(issueRef) : null);
+    if (!issue || issue.companyId !== companyId) {
+      throw notFound("Issue not found");
+    }
+    return issue;
+  }
+
+  async function enforceAgentBridgeActionScope(
+    req: Request,
+    key: string,
+    companyId: string | undefined,
+    params: Record<string, unknown>,
+  ) {
+    if (req.actor.type !== "agent") return;
+    if (!companyId) {
+      throw forbidden("Agent company scope required");
+    }
+    if (!AGENT_BRIDGE_ACTION_ALLOWLIST.has(key)) {
+      throw forbidden("Agent bridge action is not allowed");
+    }
+
+    const issueRef = normalizeOptionalString(params.issueId);
+    if (!issueRef) {
+      throw unprocessable("Agent bridge actions require params.issueId");
+    }
+    const issue = await resolveBridgeActionIssue(issueRef, companyId);
+    const runId = normalizeOptionalString(req.actor.runId);
+    if (!runId) {
+      throw unauthorized("Agent run id required");
+    }
+    const agentId = normalizeOptionalString(req.actor.agentId);
+    if (!agentId) {
+      throw forbidden("Agent authentication required");
+    }
+    await issuesSvc.assertCheckoutOwner(issue.id, agentId, runId);
+  }
+
+  function buildBridgeParamsForActor(
+    req: Request,
+    params: Record<string, unknown>,
+    companyId: string | undefined,
+  ) {
+    if (req.actor.type !== "agent" || !companyId || normalizeOptionalString(params.companyId)) {
+      return params;
+    }
+    return {
+      ...params,
+      companyId,
+    };
+  }
+
   async function validateToolRunContextScope(runContext: ToolRunContext): Promise<string | null> {
     const [agent] = await db
       .select({ companyId: agents.companyId })
@@ -615,7 +730,7 @@ export function pluginRoutes(
    * Response: `PluginRecord[]`
    */
   router.get("/plugins", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertPluginListAccess(req);
     const rawStatus = req.query.status;
     if (rawStatus !== undefined) {
       if (typeof rawStatus !== "string" || !(PLUGIN_STATUSES as readonly string[]).includes(rawStatus)) {
@@ -629,7 +744,7 @@ export function pluginRoutes(
     const plugins = status
       ? await registry.listByStatus(status)
       : await registry.listInstalled();
-    res.json(plugins);
+    res.json(req.actor.type === "agent" ? plugins.map(serializePluginForAgent) : plugins);
   });
 
   /**
@@ -1124,9 +1239,9 @@ export function pluginRoutes(
    *
    * @see PLUGIN_SPEC.md §13.9 — `performAction`
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
-   */
+  */
   router.post("/plugins/:pluginId/bridge/action", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertAuthenticated(req);
 
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
@@ -1159,7 +1274,9 @@ export function pluginRoutes(
       return;
     }
 
-    assertPluginBridgeScope(req, body.companyId);
+    const companyId = resolveAgentBridgeCompanyScope(req, body.companyId);
+    const params = normalizeOptionalRecord(body.params) ?? {};
+    await enforceAgentBridgeActionScope(req, body.key, companyId, params);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1167,7 +1284,7 @@ export function pluginRoutes(
         "performAction",
         {
           key: body.key,
-          params: body.params ?? {},
+          params: buildBridgeParamsForActor(req, params, companyId),
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );
@@ -1283,9 +1400,9 @@ export function pluginRoutes(
    *
    * @see PLUGIN_SPEC.md §13.9 — `performAction`
    * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
-   */
+  */
   router.post("/plugins/:pluginId/actions/:key", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertAuthenticated(req);
 
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
@@ -1317,7 +1434,9 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    assertPluginBridgeScope(req, body?.companyId);
+    const companyId = resolveAgentBridgeCompanyScope(req, body?.companyId);
+    const params = normalizeOptionalRecord(body?.params) ?? {};
+    await enforceAgentBridgeActionScope(req, key, companyId, params);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1325,7 +1444,7 @@ export function pluginRoutes(
         "performAction",
         {
           key,
-          params: body?.params ?? {},
+          params: buildBridgeParamsForActor(req, params, companyId),
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );

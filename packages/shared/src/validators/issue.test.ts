@@ -36,6 +36,17 @@ describe("issue validators", () => {
     expect(parsed.description).toBe("PR: https://example.com/pr/1\n\nShip the follow-up.");
   });
 
+  it("preserves external origin identity on issue creation", () => {
+    const parsed = createIssueSchema.parse({
+      title: "OpenClaw task",
+      originKind: "telegram_openclaw",
+      originId: "telegram-topic:-1003665527854:1570:3309",
+    });
+
+    expect(parsed.originKind).toBe("telegram_openclaw");
+    expect(parsed.originId).toBe("telegram-topic:-1003665527854:1570:3309");
+  });
+
   it("normalizes escaped line breaks in issue update comments", () => {
     const parsed = updateIssueSchema.parse({
       comment: "Done\\n\\n- Verified the route",

@@ -28,6 +28,8 @@ export interface ActivityFilters {
 
 const DEFAULT_ACTIVITY_LIMIT = 100;
 const MAX_ACTIVITY_LIMIT = 500;
+const RUN_LIVENESS_TEXT_MAX_CHARS = 4000;
+const RUN_LIVENESS_OUTPUT_MAX_CHARS = 2000;
 
 export function normalizeActivityLimit(limit: number | undefined) {
   if (!Number.isFinite(limit)) return DEFAULT_ACTIVITY_LIMIT;
@@ -110,6 +112,29 @@ export function activityService(db: Db) {
       ))
     end
   `.as("resultJson");
+  const livenessBackfillContextSnapshot = sql<Record<string, unknown> | null>`
+    case
+      when ${heartbeatRuns.contextSnapshot} is null then null
+      else jsonb_strip_nulls(jsonb_build_object(
+        'issueId', ${heartbeatRuns.contextSnapshot} -> 'issueId',
+        'continuationAttempt', ${heartbeatRuns.contextSnapshot} -> 'continuationAttempt',
+        'livenessContinuationAttempt', ${heartbeatRuns.contextSnapshot} -> 'livenessContinuationAttempt'
+      ))
+    end
+  `.as("contextSnapshot");
+  const livenessBackfillResultJson = sql<Record<string, unknown> | null>`
+    case
+      when ${heartbeatRuns.resultJson} is null then null
+      else jsonb_strip_nulls(jsonb_build_object(
+        'summary', left(${heartbeatRuns.resultJson} ->> 'summary', ${RUN_LIVENESS_TEXT_MAX_CHARS}),
+        'result', left(${heartbeatRuns.resultJson} ->> 'result', ${RUN_LIVENESS_TEXT_MAX_CHARS}),
+        'message', left(${heartbeatRuns.resultJson} ->> 'message', ${RUN_LIVENESS_TEXT_MAX_CHARS}),
+        'error', left(${heartbeatRuns.resultJson} ->> 'error', ${RUN_LIVENESS_TEXT_MAX_CHARS}),
+        'stdout', left(${heartbeatRuns.resultJson} ->> 'stdout', ${RUN_LIVENESS_OUTPUT_MAX_CHARS}),
+        'stderr', left(${heartbeatRuns.resultJson} ->> 'stderr', ${RUN_LIVENESS_OUTPUT_MAX_CHARS})
+      ))
+    end
+  `.as("resultJson");
 
   function countValue(value: unknown) {
     const parsed = Number(value ?? 0);
@@ -140,6 +165,17 @@ export function activityService(db: Db) {
     return value as Record<string, unknown>;
   }
 
+  function safeContextSnapshotSummary(value: unknown) {
+    const context = asRecord(value);
+    if (!context) return null;
+    return {
+      issueId: typeof context.issueId === "string" ? context.issueId : null,
+      wakeReason: typeof context.wakeReason === "string" ? context.wakeReason : null,
+      source: typeof context.source === "string" ? context.source : null,
+      continuationAttempt: readNumber(context.continuationAttempt),
+    };
+  }
+
   function readNumber(value: unknown) {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
   }
@@ -150,8 +186,8 @@ export function activityService(db: Db) {
         id: heartbeatRuns.id,
         companyId: heartbeatRuns.companyId,
         status: heartbeatRuns.status,
-        contextSnapshot: heartbeatRuns.contextSnapshot,
-        resultJson: heartbeatRuns.resultJson,
+        contextSnapshot: livenessBackfillContextSnapshot,
+        resultJson: livenessBackfillResultJson,
         stdoutExcerpt: heartbeatRuns.stdoutExcerpt,
         stderrExcerpt: heartbeatRuns.stderrExcerpt,
         error: heartbeatRuns.error,
@@ -375,7 +411,8 @@ export function activityService(db: Db) {
         )
         .orderBy(desc(activityLog.createdAt)),
 
-    runsForIssue: async (companyId: string, issueId: string) => {
+    runsForIssue: async (companyId: string, issueId: string, options?: { limit?: number }) => {
+      const limit = normalizeActivityLimit(options?.limit);
       scheduleRunLivenessBackfill(companyId, issueId);
       const runs = await db
         .select({
@@ -399,7 +436,17 @@ export function activityService(db: Db) {
           continuationAttempt: heartbeatRuns.continuationAttempt,
           lastUsefulActionAt: heartbeatRuns.lastUsefulActionAt,
           nextAction: heartbeatRuns.nextAction,
-          contextSnapshot: heartbeatRuns.contextSnapshot,
+          contextSnapshot: sql<Record<string, unknown> | null>`
+            case
+              when ${heartbeatRuns.contextSnapshot} is null then null
+              else jsonb_strip_nulls(jsonb_build_object(
+                'issueId', ${heartbeatRuns.contextSnapshot} -> 'issueId',
+                'wakeReason', ${heartbeatRuns.contextSnapshot} -> 'wakeReason',
+                'source', ${heartbeatRuns.contextSnapshot} -> 'source',
+                'continuationAttempt', ${heartbeatRuns.contextSnapshot} -> 'continuationAttempt'
+              ))
+            end
+          `.as("contextSnapshot"),
         })
         .from(heartbeatRuns)
         .innerJoin(
@@ -425,7 +472,8 @@ export function activityService(db: Db) {
             ),
           ),
         )
-        .orderBy(desc(heartbeatRuns.createdAt));
+        .orderBy(desc(heartbeatRuns.createdAt))
+        .limit(limit);
 
       if (runs.length === 0) return runs;
       const runIds = runs.map((run) => run.runId);
@@ -489,6 +537,7 @@ export function activityService(db: Db) {
               : null;
         return {
           ...run,
+          contextSnapshot: safeContextSnapshotSummary(run.contextSnapshot),
           environment: leaseRow
             ? {
                 id: leaseRow.environment.id,

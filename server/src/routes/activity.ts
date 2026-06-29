@@ -77,7 +77,9 @@ export function activityRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const result = await svc.runsForIssue(issue.companyId, issue.id);
+    const result = await svc.runsForIssue(issue.companyId, issue.id, {
+      limit: normalizeActivityLimit(Number(req.query.limit)),
+    });
     res.json(result);
   });
 
