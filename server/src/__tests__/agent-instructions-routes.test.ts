@@ -210,7 +210,7 @@ describe("agent instructions bundle routes", () => {
         instructionsRootPath: "/tmp/agent-1",
         instructionsEntryFile: "AGENTS.md",
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
       },
     });
 
@@ -249,7 +249,7 @@ describe("agent instructions bundle routes", () => {
         instructionsRootPath: "/tmp/agent-1",
         instructionsEntryFile: "AGENTS.md",
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
       },
     });
 
@@ -267,7 +267,7 @@ describe("agent instructions bundle routes", () => {
       expect.objectContaining({
         adapterConfig: expect.objectContaining({
           command: "codex --profile engineer",
-          model: "gpt-5.4",
+          model: "gpt-5.5",
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
           instructionsEntryFile: "AGENTS.md",
@@ -287,7 +287,7 @@ describe("agent instructions bundle routes", () => {
         instructionsRootPath: "/tmp/agent-1",
         instructionsEntryFile: "AGENTS.md",
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
       },
     });
 
