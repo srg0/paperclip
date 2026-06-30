@@ -5,8 +5,10 @@ import {
   buildIssueOriginLookupUrl,
   buildLaunchActionBody,
   buildProofHeartbeatRunRecord,
+  buildSkippedHeartbeatRunRecord,
   buildSyncActionBody,
   parseArgs,
+  summarizeFetchError,
   summarizeHttpResult,
 } from "../../../scripts/hmr-plugin-route-auth-proof.mjs";
 
@@ -64,6 +66,7 @@ describe("hmr plugin route auth proof helper", () => {
       "--data-probe",
       "--data-key",
       "atlas-bridge-issue-execution",
+      "--skip-heartbeat-run",
     ])).toMatchObject({
       baseUrl: "https://paperclip.ai.k-digital.pro",
       companyPrefix: "HOM",
@@ -72,6 +75,7 @@ describe("hmr plugin route auth proof helper", () => {
       syncProbe: true,
       dataProbe: true,
       dataKey: "atlas-bridge-issue-execution",
+      skipHeartbeatRun: true,
     });
   });
 
@@ -94,6 +98,39 @@ describe("hmr plugin route auth proof helper", () => {
       resultJson: {
         proof: "hmr_plugin_route_auth",
         routeContext: "public_paperclip_api",
+      },
+    });
+  });
+
+  it("can skip heartbeat run insertion for read-only proof", () => {
+    expect(buildSkippedHeartbeatRunRecord("11111111-1111-4111-8111-111111111111")).toEqual({
+      id: "11111111-1111-4111-8111-111111111111",
+      created: false,
+      skipped: true,
+      status: "skipped",
+      reason: "skip_heartbeat_run",
+    });
+  });
+
+  it("serializes fetch failures as route results", () => {
+    const result = summarizeFetchError(
+      new TypeError("fetch failed", { cause: Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" }) }),
+      "https://paperclip.ai.k-digital.pro/api/plugins",
+    );
+
+    expect(result).toMatchObject({
+      status: null,
+      transportOk: false,
+      routeAuthOk: null,
+      body: null,
+      error: {
+        name: "TypeError",
+        message: "fetch failed",
+        url: "https://paperclip.ai.k-digital.pro/api/plugins",
+        cause: {
+          code: "ETIMEDOUT",
+          message: "connect ETIMEDOUT",
+        },
       },
     });
   });

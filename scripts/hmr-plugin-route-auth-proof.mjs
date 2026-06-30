@@ -36,6 +36,7 @@ function usage() {
       "  --project-id <uuid>           Optional project id for --create-issue",
       "  --assignee-agent-id <uuid>    Optional assignee agent id for --create-issue",
       "  --run-id <uuid>               Optional proof run id; default creates a new UUID",
+      "  --skip-heartbeat-run          Do not insert a proof heartbeat run before route probes",
       "  --sync-probe                  Probe atlas-bridge-sync-issue-projection",
       "  --launch-probe                Probe atlas-bridge-launch-issue-execution",
       "  --data-probe                  Probe atlas-bridge-issue-execution data projection",
@@ -66,6 +67,7 @@ export function parseArgs(argv) {
     projectId: null,
     assigneeAgentId: null,
     runId: null,
+    skipHeartbeatRun: false,
     syncProbe: false,
     launchProbe: false,
     dataProbe: false,
@@ -104,6 +106,7 @@ export function parseArgs(argv) {
     else if (arg === "--project-id") out.projectId = readValue();
     else if (arg === "--assignee-agent-id") out.assigneeAgentId = readValue();
     else if (arg === "--run-id") out.runId = readValue();
+    else if (arg === "--skip-heartbeat-run") out.skipHeartbeatRun = true;
     else if (arg === "--repo") out.repo = readValue();
     else if (arg === "--env-name") out.envName = readValue();
     else if (arg === "--data-key") out.dataKey = readValue();
@@ -240,6 +243,16 @@ async function ensureProofHeartbeatRun(db, modules, { runId, company, agent }) {
   };
 }
 
+export function buildSkippedHeartbeatRunRecord(runId) {
+  return {
+    id: runId,
+    created: false,
+    skipped: true,
+    status: "skipped",
+    reason: "skip_heartbeat_run",
+  };
+}
+
 export function buildSyncActionBody(companyId, issueId) {
   return {
     companyId,
@@ -307,9 +320,38 @@ export function summarizeHttpResult(status, bodyText) {
   const text = typeof bodyText === "string" ? bodyText.slice(0, 1000) : "";
   return {
     status,
+    transportOk: true,
     routeAuthOk: status !== 401 && status !== 403,
     body: parsed ?? text,
   };
+}
+
+export function summarizeFetchError(error, url) {
+  const message = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : "Error";
+  const cause = error instanceof Error && error.cause
+    ? {
+        name: error.cause?.name,
+        code: error.cause?.code,
+        message: error.cause?.message,
+      }
+    : null;
+  return {
+    status: null,
+    transportOk: false,
+    routeAuthOk: null,
+    body: null,
+    error: {
+      name,
+      message,
+      cause,
+      url,
+    },
+  };
+}
+
+function hasRouteAuth(result) {
+  return result?.routeAuthOk === true;
 }
 
 function isHttpSuccess(result) {
@@ -317,17 +359,21 @@ function isHttpSuccess(result) {
 }
 
 async function requestJson({ method, url, token, runId, body }) {
-  const response = await fetch(url, {
-    method,
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-Paperclip-Run-Id": runId,
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await response.text();
-  return summarizeHttpResult(response.status, text);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "X-Paperclip-Run-Id": runId,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    return summarizeHttpResult(response.status, text);
+  } catch (error) {
+    return summarizeFetchError(error, url);
+  }
 }
 
 async function findExistingIssueByOrigin({ baseUrl, companyId, token, runId, originKind, originId }) {
@@ -378,7 +424,9 @@ async function main() {
   try {
     const company = await resolveCompany(db, modules, opts);
     const agent = await resolveAgent(db, modules, company, opts);
-    const heartbeatRun = await ensureProofHeartbeatRun(db, modules, { runId, company, agent });
+    const heartbeatRun = opts.skipHeartbeatRun
+      ? buildSkippedHeartbeatRunRecord(runId)
+      : await ensureProofHeartbeatRun(db, modules, { runId, company, agent });
     const token = modules.createLocalAgentJwt(agent.id, company.id, agent.adapterType, runId);
     if (!token) {
       throw new Error("Could not create local agent JWT. PAPERCLIP_AGENT_JWT_SECRET or BETTER_AUTH_SECRET is missing from the helper runtime.");
@@ -495,9 +543,9 @@ async function main() {
     }
 
     const report = {
-      ok: discovery.routeAuthOk &&
-        actions.every((entry) => entry.result.routeAuthOk) &&
-        dataProbes.every((entry) => entry.result.routeAuthOk) &&
+      ok: hasRouteAuth(discovery) &&
+        actions.every((entry) => hasRouteAuth(entry.result)) &&
+        dataProbes.every((entry) => hasRouteAuth(entry.result)) &&
         issueCreateOk,
       credential: {
         type: "local_agent_jwt",
