@@ -38,6 +38,8 @@ function usage() {
       "  --run-id <uuid>               Optional proof run id; default creates a new UUID",
       "  --sync-probe                  Probe atlas-bridge-sync-issue-projection",
       "  --launch-probe                Probe atlas-bridge-launch-issue-execution",
+      "  --data-probe                  Probe atlas-bridge-issue-execution data projection",
+      "  --data-key <key>              Plugin data key, default atlas-bridge-issue-execution",
       "  --repo <repo>                 Launch repo param, default homio/core",
       "  --env-name <env>              Launch envName param, default ai01",
       "  --json                        Emit JSON only",
@@ -66,6 +68,8 @@ export function parseArgs(argv) {
     runId: null,
     syncProbe: false,
     launchProbe: false,
+    dataProbe: false,
+    dataKey: "atlas-bridge-issue-execution",
     repo: "homio/core",
     envName: "ai01",
     request: DEFAULT_REQUEST,
@@ -102,9 +106,11 @@ export function parseArgs(argv) {
     else if (arg === "--run-id") out.runId = readValue();
     else if (arg === "--repo") out.repo = readValue();
     else if (arg === "--env-name") out.envName = readValue();
+    else if (arg === "--data-key") out.dataKey = readValue();
     else if (arg === "--request") out.request = readValue();
     else if (arg === "--sync-probe") out.syncProbe = true;
     else if (arg === "--launch-probe") out.launchProbe = true;
+    else if (arg === "--data-probe") out.dataProbe = true;
     else if (arg === "--json") out.json = true;
     else if (arg === "--help" || arg === "-h") {
       usage();
@@ -258,6 +264,16 @@ export function buildLaunchActionBody(companyId, issueId, opts = {}) {
   };
 }
 
+export function buildDataProbeBody(companyId, issueId) {
+  return {
+    companyId,
+    params: {
+      companyId,
+      issueId,
+    },
+  };
+}
+
 export function buildCreateIssueBody(opts = {}) {
   const body = {
     title: opts.title ?? "HMR plugin route auth proof issue",
@@ -379,8 +395,8 @@ async function main() {
     const actions = [];
     let issueCreate = null;
 
-    if ((opts.syncProbe || opts.launchProbe) && !opts.issueId) {
-      throw new Error("--issue-id is required for action probes");
+    if ((opts.syncProbe || opts.launchProbe || opts.dataProbe) && !opts.issueId) {
+      throw new Error("--issue-id is required for action/data probes");
     }
 
     if (opts.createIssue) {
@@ -464,8 +480,25 @@ async function main() {
       });
     }
 
+    const dataProbes = [];
+    if (opts.dataProbe) {
+      dataProbes.push({
+        key: opts.dataKey,
+        result: await requestJson({
+          method: "POST",
+          url: `${baseUrl}/api/plugins/${resolvedPluginId}/data/${encodeURIComponent(opts.dataKey)}`,
+          token,
+          runId,
+          body: buildDataProbeBody(company.id, opts.issueId),
+        }),
+      });
+    }
+
     const report = {
-      ok: discovery.routeAuthOk && actions.every((entry) => entry.result.routeAuthOk) && issueCreateOk,
+      ok: discovery.routeAuthOk &&
+        actions.every((entry) => entry.result.routeAuthOk) &&
+        dataProbes.every((entry) => entry.result.routeAuthOk) &&
+        issueCreateOk,
       credential: {
         type: "local_agent_jwt",
         token: "<redacted>",
@@ -498,6 +531,7 @@ async function main() {
       },
       issueCreate,
       actions,
+      dataProbes,
     };
 
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

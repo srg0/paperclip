@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCreateIssueBody,
+  buildDataProbeBody,
   buildIssueOriginLookupUrl,
   buildLaunchActionBody,
   buildProofHeartbeatRunRecord,
@@ -30,6 +31,16 @@ describe("hmr plugin route auth proof helper", () => {
     });
   });
 
+  it("builds data probe bodies with top-level and nested company scope", () => {
+    expect(buildDataProbeBody("company-1", "issue-1")).toEqual({
+      companyId: "company-1",
+      params: {
+        companyId: "company-1",
+        issueId: "issue-1",
+      },
+    });
+  });
+
   it("treats only 401 and 403 as route auth failures", () => {
     expect(summarizeHttpResult(403, '{"error":"Board access required"}')).toMatchObject({
       routeAuthOk: false,
@@ -50,12 +61,17 @@ describe("hmr plugin route auth proof helper", () => {
       "--issue-id",
       "HOM-1",
       "--sync-probe",
+      "--data-probe",
+      "--data-key",
+      "atlas-bridge-issue-execution",
     ])).toMatchObject({
       baseUrl: "https://paperclip.ai.k-digital.pro",
       companyPrefix: "HOM",
       agentName: "OpenClaw",
       issueId: "HOM-1",
       syncProbe: true,
+      dataProbe: true,
+      dataKey: "atlas-bridge-issue-execution",
     });
   });
 
