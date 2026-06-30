@@ -1,6 +1,10 @@
 import express from "express";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { pluginRoutes } from "../routes/plugins.js";
 
@@ -15,6 +19,11 @@ const mockWorkerManager = vi.hoisted(() => ({
   call: vi.fn(),
 }));
 
+const mockLifecycle = vi.hoisted(() => ({
+  load: vi.fn(),
+  upgrade: vi.fn(),
+}));
+
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
@@ -26,14 +35,24 @@ vi.mock("../services/plugin-registry.js", () => ({
 }));
 
 vi.mock("../services/plugin-lifecycle.js", () => ({
-  pluginLifecycleManager: () => ({}),
+  pluginLifecycleManager: () => mockLifecycle,
 }));
 
 vi.mock("../services/issues.js", () => ({
   issueService: () => mockIssueService,
 }));
 
-function createApp(actor: any) {
+const mockLoader = {
+  getLocalPluginDir: vi.fn(),
+  installPlugin: vi.fn(),
+  loadManifest: vi.fn(),
+};
+
+const ORIGINAL_HMR_LOCAL_PLUGIN_ADMIN = process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_ADMIN;
+const ORIGINAL_HMR_LOCAL_PLUGIN_PATHS = process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_PATHS;
+const ORIGINAL_PUBLIC_URL = process.env.PAPERCLIP_PUBLIC_URL;
+
+function createApp(actor: any, loader: any = mockLoader) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -44,7 +63,7 @@ function createApp(actor: any) {
     "/api",
     pluginRoutes(
       {} as any,
-      {} as any,
+      loader,
       undefined,
       undefined,
       undefined,
@@ -58,13 +77,25 @@ function createApp(actor: any) {
 describe("plugin bridge agent access", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_ADMIN;
+    delete process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_PATHS;
+    delete process.env.PAPERCLIP_PUBLIC_URL;
     mockRegistry.getById.mockResolvedValue(null);
     mockRegistry.getByKey.mockResolvedValue({
       id: "plugin-row-1",
       pluginKey: "homio.atlas-bridge",
+      packageName: "@homio/atlas-bridge-plugin",
+      version: "0.0.145",
       status: "ready",
     });
     mockWorkerManager.call.mockResolvedValue({ ok: true });
+    mockLifecycle.upgrade.mockResolvedValue({
+      id: "plugin-row-1",
+      pluginKey: "homio.atlas-bridge",
+      packageName: "@homio/atlas-bridge-plugin",
+      version: "0.0.145",
+      status: "ready",
+    });
     mockIssueService.getById.mockResolvedValue(null);
     mockIssueService.getByIdentifier.mockResolvedValue(null);
     mockIssueService.assertCheckoutOwner.mockResolvedValue({
@@ -73,6 +104,15 @@ describe("plugin bridge agent access", () => {
       assigneeAgentId: "agent-1",
       checkoutRunId: "run-1",
     });
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_HMR_LOCAL_PLUGIN_ADMIN === undefined) delete process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_ADMIN;
+    else process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_ADMIN = ORIGINAL_HMR_LOCAL_PLUGIN_ADMIN;
+    if (ORIGINAL_HMR_LOCAL_PLUGIN_PATHS === undefined) delete process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_PATHS;
+    else process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_PATHS = ORIGINAL_HMR_LOCAL_PLUGIN_PATHS;
+    if (ORIGINAL_PUBLIC_URL === undefined) delete process.env.PAPERCLIP_PUBLIC_URL;
+    else process.env.PAPERCLIP_PUBLIC_URL = ORIGINAL_PUBLIC_URL;
   });
 
   it("allows company-scoped agents to discover installed plugins without management-only fields", async () => {
@@ -269,5 +309,68 @@ describe("plugin bridge agent access", () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("companyId is required for agent bridge access");
     expect(mockWorkerManager.call).not.toHaveBeenCalled();
+  });
+
+  it("keeps local plugin upgrade board-only unless the HMR local admin contract is enabled", async () => {
+    process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_ADMIN = "false";
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "agent_jwt",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .post("/api/plugins/homio.atlas-bridge/upgrade")
+      .send({
+        packageName: "/workspace/projects/paperclip-atlas-bridge/packages/atlas-bridge-plugin",
+        isLocalPath: true,
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("HMR local plugin admin is not enabled");
+    expect(mockLifecycle.upgrade).not.toHaveBeenCalled();
+  });
+
+  it("allows HMR company-scoped agents to upgrade an allowlisted local plugin snapshot", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "paperclip-hmr-plugin-"));
+    const sourceRoot = path.join(tempRoot, "projects", "paperclip-atlas-bridge", "packages", "atlas-bridge-plugin");
+    const localPluginDir = path.join(tempRoot, "home", ".paperclip", "plugins");
+    await mkdir(sourceRoot, { recursive: true });
+    await writeFile(path.join(sourceRoot, "worker.js"), "retry_execution\n", { flag: "wx" });
+
+    try {
+      process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_ADMIN = "true";
+      process.env.PAPERCLIP_HMR_LOCAL_PLUGIN_PATHS = path.join(tempRoot, "projects");
+      mockLoader.getLocalPluginDir.mockReturnValue(localPluginDir);
+
+      const app = createApp({
+        type: "agent",
+        agentId: "agent-1",
+        companyId: "company-1",
+        source: "agent_jwt",
+        runId: "run-1",
+      });
+
+      const res = await request(app)
+        .post("/api/plugins/homio.atlas-bridge/upgrade")
+        .send({
+          packageName: sourceRoot,
+          isLocalPath: true,
+        });
+
+      const expectedSnapshot = path.join(localPluginDir, "homio.atlas-bridge");
+      expect(res.status).toBe(200);
+      expect(mockLifecycle.upgrade).toHaveBeenCalledWith("plugin-row-1", {
+        localPath: expectedSnapshot,
+        version: undefined,
+      });
+      expect(existsSync(expectedSnapshot)).toBe(true);
+      await expect(readFile(path.join(expectedSnapshot, "worker.js"), "utf8"))
+        .resolves.toContain("retry_execution");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });

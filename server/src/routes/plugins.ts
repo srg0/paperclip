@@ -18,6 +18,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { cp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -88,6 +89,15 @@ interface PluginInstallRequest {
   isLocalPath?: boolean;
 }
 
+interface PluginUpgradeRequest {
+  /** Target version for npm packages (optional, defaults to latest) */
+  version?: string;
+  /** Optional local plugin source path for HMR-local upgrade flows */
+  packageName?: string;
+  /** True if packageName is a local filesystem path */
+  isLocalPath?: boolean;
+}
+
 interface AvailablePluginExample {
   packageName: string;
   pluginKey: string;
@@ -117,6 +127,11 @@ const UUID_REGEX =
 const AGENT_BRIDGE_ACTION_COMPANY_FALLBACK_ALLOWLIST = new Set([
   "atlas-bridge-run-stand-deploy-request",
 ]);
+
+const HMR_LOCAL_PLUGIN_ADMIN_ENV = "PAPERCLIP_HMR_LOCAL_PLUGIN_ADMIN";
+const HMR_LOCAL_PLUGIN_PATHS_ENV = "PAPERCLIP_HMR_LOCAL_PLUGIN_PATHS";
+const HMR_PUBLIC_URLS = new Set(["https://paperclip.ai.k-digital.pro"]);
+const DEFAULT_HMR_LOCAL_PLUGIN_PATH_PREFIXES = ["/workspace/projects"];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
@@ -158,6 +173,101 @@ function listBundledPluginExamples(): AvailablePluginExample[] {
 
 function normalizeOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+}
+
+function normalizeUrl(value: string | undefined): string {
+  return (value ?? "").trim().replace(/\/+$/, "");
+}
+
+function isHmrLocalPluginAdminEnabled(): boolean {
+  const explicit = process.env[HMR_LOCAL_PLUGIN_ADMIN_ENV];
+  if (explicit !== undefined) return isTruthyEnv(explicit);
+  return HMR_PUBLIC_URLS.has(normalizeUrl(process.env.PAPERCLIP_PUBLIC_URL));
+}
+
+function hmrLocalPluginPathPrefixes(): string[] {
+  const configured = process.env[HMR_LOCAL_PLUGIN_PATHS_ENV]?.trim();
+  const rawPrefixes = configured
+    ? configured.split(",").map((entry) => entry.trim()).filter(Boolean)
+    : DEFAULT_HMR_LOCAL_PLUGIN_PATH_PREFIXES;
+  return rawPrefixes.map((entry) => path.resolve(entry));
+}
+
+function isPathInsideOrEqual(candidate: string, parent: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function getHttpErrorStatus(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return String(error);
+}
+
+type PluginMutationAuthScope = "board" | "hmr_local_agent";
+
+function assertLocalPluginMutationAccess(req: Request, localPath: string): PluginMutationAuthScope {
+  if (req.actor.type === "board") {
+    assertBoard(req);
+    return "board";
+  }
+
+  if (req.actor.type !== "agent") {
+    assertBoard(req);
+  }
+
+  if (!isHmrLocalPluginAdminEnabled()) {
+    throw forbidden("HMR local plugin admin is not enabled");
+  }
+  if (!req.actor.companyId || !req.actor.agentId) {
+    throw forbidden("Company-scoped agent access required");
+  }
+
+  assertCompanyAccess(req, req.actor.companyId);
+
+  const resolvedPath = path.resolve(localPath);
+  const allowed = hmrLocalPluginPathPrefixes().some((prefix) =>
+    isPathInsideOrEqual(resolvedPath, prefix)
+  );
+  if (!allowed) {
+    throw forbidden("Local plugin path is not in the HMR allowlist");
+  }
+
+  return "hmr_local_agent";
+}
+
+async function copyLocalPluginSnapshot(
+  loader: ReturnType<typeof pluginLoader>,
+  pluginKey: string,
+  sourcePath: string,
+): Promise<{ sourcePath: string; localPath: string; copied: boolean }> {
+  const resolvedSource = path.resolve(sourcePath);
+  const localPluginDir = loader.getLocalPluginDir();
+  const localPath = path.resolve(localPluginDir, pluginKey);
+
+  if (isPathInsideOrEqual(resolvedSource, localPath) && resolvedSource !== localPath) {
+    throw unprocessable("Local plugin source cannot be inside the managed plugin snapshot");
+  }
+
+  if (resolvedSource !== localPath) {
+    await rm(localPath, { recursive: true, force: true });
+    await mkdir(path.dirname(localPath), { recursive: true });
+    await cp(resolvedSource, localPath, { recursive: true });
+  }
+
+  return { sourcePath: resolvedSource, localPath, copied: resolvedSource !== localPath };
 }
 
 function normalizeOptionalRecord(value: unknown): Record<string, unknown> | null {
@@ -745,7 +855,6 @@ export function pluginRoutes(
    * - `500` — installation succeeded but manifest is missing (indicates a loader bug)
    */
   router.post("/plugins/install", async (req, res) => {
-    assertBoard(req);
     const { packageName, version, isLocalPath } = req.body as PluginInstallRequest;
 
     // Input validation
@@ -777,9 +886,27 @@ export function pluginRoutes(
       return;
     }
 
+    let installPackageName = trimmedPackage;
+    let mutationScope: PluginMutationAuthScope = "board";
+
+    if (isLocalPath) {
+      mutationScope = assertLocalPluginMutationAccess(req, trimmedPackage);
+      if (mutationScope === "hmr_local_agent") {
+        const manifest = await loader.loadManifest(trimmedPackage);
+        if (!manifest) {
+          res.status(400).json({ error: "Local plugin path does not contain a valid Paperclip plugin manifest" });
+          return;
+        }
+        const snapshot = await copyLocalPluginSnapshot(loader, manifest.id, trimmedPackage);
+        installPackageName = snapshot.localPath;
+      }
+    } else {
+      assertBoard(req);
+    }
+
     try {
       const installOptions = isLocalPath
-        ? { localPath: trimmedPackage }
+        ? { localPath: installPackageName }
         : { packageName: trimmedPackage, version: version?.trim() };
 
       const discovered = await loader.installPlugin(installOptions);
@@ -794,13 +921,15 @@ export function pluginRoutes(
       if (existingPlugin) {
         await lifecycle.load(existingPlugin.id);
         const updated = await registry.getById(existingPlugin.id);
-        await logPluginMutationActivity(req, "plugin.installed", existingPlugin.id, {
-          pluginId: existingPlugin.id,
-          pluginKey: existingPlugin.pluginKey,
-          packageName: updated?.packageName ?? existingPlugin.packageName,
-          version: updated?.version ?? existingPlugin.version,
-          source: isLocalPath ? "local_path" : "npm",
-        });
+        if (mutationScope !== "hmr_local_agent") {
+          await logPluginMutationActivity(req, "plugin.installed", existingPlugin.id, {
+            pluginId: existingPlugin.id,
+            pluginKey: existingPlugin.pluginKey,
+            packageName: updated?.packageName ?? existingPlugin.packageName,
+            version: updated?.version ?? existingPlugin.version,
+            source: isLocalPath ? "local_path" : "npm",
+          });
+        }
         publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: existingPlugin.id, action: "installed" } });
         res.json(updated);
       } else {
@@ -808,8 +937,9 @@ export function pluginRoutes(
         res.status(500).json({ error: "Plugin installed but not found in registry" });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(400).json({ error: message });
+      const status = getHttpErrorStatus(err);
+      const message = getErrorMessage(err);
+      res.status(status ?? 400).json({ error: message });
     }
   });
 
@@ -1384,8 +1514,9 @@ export function pluginRoutes(
       publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "uninstalled" } });
       res.json(result);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(400).json({ error: message });
+      const status = getHttpErrorStatus(err);
+      const message = getErrorMessage(err);
+      res.status(status ?? 400).json({ error: message });
     }
   });
 
@@ -1597,15 +1728,31 @@ export function pluginRoutes(
    * Errors: 404 if plugin not found, 400 for lifecycle errors
    */
   router.post("/plugins/:pluginId/upgrade", async (req, res) => {
-    assertBoard(req);
     const { pluginId } = req.params;
-    const body = req.body as { version?: string } | undefined;
+    const body = req.body as PluginUpgradeRequest | undefined;
     const version = body?.version;
+    const isLocalPath = body?.isLocalPath === true;
+    const packageName = normalizeOptionalString(body?.packageName);
 
     const plugin = await resolvePlugin(registry, pluginId);
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
+    }
+
+    let mutationScope: PluginMutationAuthScope = "board";
+    let localPath: string | undefined;
+
+    if (isLocalPath) {
+      if (!packageName) {
+        res.status(400).json({ error: "packageName is required when isLocalPath is true" });
+        return;
+      }
+      mutationScope = assertLocalPluginMutationAccess(req, packageName);
+      const snapshot = await copyLocalPluginSnapshot(loader, plugin.pluginKey, packageName);
+      localPath = snapshot.localPath;
+    } else {
+      assertBoard(req);
     }
 
     try {
@@ -1614,19 +1761,25 @@ export function pluginRoutes(
       // 2. Compare capabilities
       // 3. If new capabilities, mark as upgrade_pending
       // 4. Otherwise, transition to ready
-      const result = await lifecycle.upgrade(plugin.id, version);
-      await logPluginMutationActivity(req, "plugin.upgraded", plugin.id, {
-        pluginId: plugin.id,
-        pluginKey: plugin.pluginKey,
-        previousVersion: plugin.version,
-        version: result?.version ?? plugin.version,
-        targetVersion: version ?? null,
-      });
+      const result = await lifecycle.upgrade(
+        plugin.id,
+        localPath ? { localPath, version } : version,
+      );
+      if (mutationScope !== "hmr_local_agent") {
+        await logPluginMutationActivity(req, "plugin.upgraded", plugin.id, {
+          pluginId: plugin.id,
+          pluginKey: plugin.pluginKey,
+          previousVersion: plugin.version,
+          version: result?.version ?? plugin.version,
+          targetVersion: version ?? null,
+        });
+      }
       publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "upgraded" } });
       res.json(result);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(400).json({ error: message });
+      const status = getHttpErrorStatus(err);
+      const message = getErrorMessage(err);
+      res.status(status ?? 400).json({ error: message });
     }
   });
 

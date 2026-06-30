@@ -130,6 +130,12 @@ export interface PluginLifecycleEvents {
 type LifecycleEventName = keyof PluginLifecycleEvents;
 type LifecycleEventPayload<K extends LifecycleEventName> = PluginLifecycleEvents[K];
 
+export interface PluginUpgradeOptions {
+  version?: string;
+  packageName?: string;
+  localPath?: string;
+}
+
 // ---------------------------------------------------------------------------
 // PluginLifecycleManager
 // ---------------------------------------------------------------------------
@@ -185,7 +191,7 @@ export interface PluginLifecycleManager {
    * If the upgrade adds new capabilities, transitions to `upgrade_pending`.
    * Otherwise, transitions to `ready` directly.
    */
-  upgrade(pluginId: string, version?: string): Promise<PluginRecord>;
+  upgrade(pluginId: string, versionOrOptions?: string | PluginUpgradeOptions): Promise<PluginRecord>;
 
   /**
    * Start the worker process for a plugin that is already in `ready` state.
@@ -636,8 +642,11 @@ export function pluginLifecycleManager(
      * @returns The updated `PluginRecord`.
      * @throws {BadRequest} If the plugin is not in a ready or upgrade_pending state.
      */
-    async upgrade(pluginId: string, version?: string): Promise<PluginRecord> {
+    async upgrade(pluginId: string, versionOrOptions?: string | PluginUpgradeOptions): Promise<PluginRecord> {
       const plugin = await requirePlugin(pluginId);
+      const upgradeOptions: PluginUpgradeOptions = typeof versionOrOptions === "string" || versionOrOptions === undefined
+        ? { version: versionOrOptions }
+        : versionOrOptions;
 
       // Can only upgrade plugins that are ready or already in upgrade_pending
       if (plugin.status !== "ready" && plugin.status !== "upgrade_pending") {
@@ -648,7 +657,12 @@ export function pluginLifecycleManager(
       }
 
       log.info(
-        { pluginId, pluginKey: plugin.pluginKey, targetVersion: version },
+        {
+          pluginId,
+          pluginKey: plugin.pluginKey,
+          targetVersion: upgradeOptions.version,
+          localPath: upgradeOptions.localPath,
+        },
         "plugin lifecycle: upgrade requested",
       );
 
@@ -656,7 +670,7 @@ export function pluginLifecycleManager(
 
       // 1. Download and validate new package via loader
       const { oldManifest, newManifest, discovered } =
-        await pluginLoaderInstance.upgradePlugin(pluginId, { version });
+        await pluginLoaderInstance.upgradePlugin(pluginId, upgradeOptions);
 
       log.info(
         {
