@@ -26,6 +26,16 @@ function usage() {
       "  --agent-name <name>           Existing non-terminated agent name, default OpenClaw",
       "  --plugin-id <id-or-key>       Plugin UUID or key, default homio.atlas-bridge",
       "  --issue-id <id>               Issue id/identifier for action probes",
+      "  --create-issue                Create or reuse one HMR proof issue through the public Paperclip route",
+      "  --issue-title <title>         Title for --create-issue",
+      "  --issue-description <body>    Description for --create-issue",
+      "  --issue-status <status>       Status for --create-issue, default backlog",
+      "  --issue-priority <priority>   Priority for --create-issue, default medium",
+      "  --origin-kind <kind>          Origin kind for idempotent --create-issue lookup",
+      "  --origin-id <id>              Origin id for idempotent --create-issue lookup",
+      "  --project-id <uuid>           Optional project id for --create-issue",
+      "  --assignee-agent-id <uuid>    Optional assignee agent id for --create-issue",
+      "  --run-id <uuid>               Optional proof run id; default creates a new UUID",
       "  --sync-probe                  Probe atlas-bridge-sync-issue-projection",
       "  --launch-probe                Probe atlas-bridge-launch-issue-execution",
       "  --repo <repo>                 Launch repo param, default homio/core",
@@ -44,6 +54,16 @@ export function parseArgs(argv) {
     agentName: DEFAULT_AGENT_NAME,
     pluginId: DEFAULT_PLUGIN_ID,
     issueId: null,
+    createIssue: false,
+    issueTitle: "HMR plugin route auth proof issue",
+    issueDescription: "HMR-only proof issue created by scripts/hmr-plugin-route-auth-proof.mjs.",
+    issueStatus: "backlog",
+    issuePriority: "medium",
+    originKind: null,
+    originId: null,
+    projectId: null,
+    assigneeAgentId: null,
+    runId: null,
     syncProbe: false,
     launchProbe: false,
     repo: "homio/core",
@@ -70,6 +90,16 @@ export function parseArgs(argv) {
     else if (arg === "--agent-name") out.agentName = readValue();
     else if (arg === "--plugin-id") out.pluginId = readValue();
     else if (arg === "--issue-id") out.issueId = readValue();
+    else if (arg === "--create-issue") out.createIssue = true;
+    else if (arg === "--issue-title") out.issueTitle = readValue();
+    else if (arg === "--issue-description") out.issueDescription = readValue();
+    else if (arg === "--issue-status") out.issueStatus = readValue();
+    else if (arg === "--issue-priority") out.issuePriority = readValue();
+    else if (arg === "--origin-kind") out.originKind = readValue();
+    else if (arg === "--origin-id") out.originId = readValue();
+    else if (arg === "--project-id") out.projectId = readValue();
+    else if (arg === "--assignee-agent-id") out.assigneeAgentId = readValue();
+    else if (arg === "--run-id") out.runId = readValue();
     else if (arg === "--repo") out.repo = readValue();
     else if (arg === "--env-name") out.envName = readValue();
     else if (arg === "--request") out.request = readValue();
@@ -173,6 +203,37 @@ async function resolveAgent(db, modules, company, opts) {
   return row;
 }
 
+export function buildProofHeartbeatRunRecord({ runId, companyId, agentId, now = new Date() }) {
+  return {
+    id: runId,
+    companyId,
+    agentId,
+    invocationSource: "hmr_plugin_route_auth_proof",
+    triggerDetail: "local_agent_jwt_route_proof",
+    status: "succeeded",
+    startedAt: now,
+    finishedAt: now,
+    resultJson: {
+      proof: "hmr_plugin_route_auth",
+      routeContext: "public_paperclip_api",
+    },
+  };
+}
+
+async function ensureProofHeartbeatRun(db, modules, { runId, company, agent }) {
+  const { heartbeatRuns } = modules;
+  const rows = await db
+    .insert(heartbeatRuns)
+    .values(buildProofHeartbeatRunRecord({ runId, companyId: company.id, agentId: agent.id }))
+    .onConflictDoNothing()
+    .returning({ id: heartbeatRuns.id });
+  return {
+    id: runId,
+    created: rows.length > 0,
+    status: "succeeded",
+  };
+}
+
 export function buildSyncActionBody(companyId, issueId) {
   return {
     companyId,
@@ -197,6 +258,29 @@ export function buildLaunchActionBody(companyId, issueId, opts = {}) {
   };
 }
 
+export function buildCreateIssueBody(opts = {}) {
+  const body = {
+    title: opts.title ?? "HMR plugin route auth proof issue",
+    description: opts.description ?? "HMR-only proof issue created by scripts/hmr-plugin-route-auth-proof.mjs.",
+    status: opts.status ?? "backlog",
+    priority: opts.priority ?? "medium",
+  };
+  if (opts.projectId) body.projectId = opts.projectId;
+  if (opts.assigneeAgentId) body.assigneeAgentId = opts.assigneeAgentId;
+  if (opts.originKind) body.originKind = opts.originKind;
+  if (opts.originId) body.originId = opts.originId;
+  return body;
+}
+
+export function buildIssueOriginLookupUrl(baseUrl, companyId, originKind, originId) {
+  const params = new URLSearchParams({
+    originKind,
+    originId,
+    limit: "10",
+  });
+  return `${baseUrl}/api/companies/${encodeURIComponent(companyId)}/issues?${params.toString()}`;
+}
+
 export function summarizeHttpResult(status, bodyText) {
   let parsed = null;
   try {
@@ -212,6 +296,10 @@ export function summarizeHttpResult(status, bodyText) {
   };
 }
 
+function isHttpSuccess(result) {
+  return result && result.status >= 200 && result.status < 300;
+}
+
 async function requestJson({ method, url, token, runId, body }) {
   const response = await fetch(url, {
     method,
@@ -224,6 +312,27 @@ async function requestJson({ method, url, token, runId, body }) {
   });
   const text = await response.text();
   return summarizeHttpResult(response.status, text);
+}
+
+async function findExistingIssueByOrigin({ baseUrl, companyId, token, runId, originKind, originId }) {
+  if (!originKind || !originId) return null;
+  const result = await requestJson({
+    method: "GET",
+    url: buildIssueOriginLookupUrl(baseUrl, companyId, originKind, originId),
+    token,
+    runId,
+  });
+  if (!result.routeAuthOk || !isHttpSuccess(result)) {
+    return {
+      lookup: result,
+      issue: null,
+    };
+  }
+  const rows = Array.isArray(result.body) ? result.body : [];
+  return {
+    lookup: result,
+    issue: rows[0] ?? null,
+  };
 }
 
 function findPlugin(discovery, pluginId) {
@@ -248,11 +357,12 @@ async function main() {
   const databaseUrl = await resolveDatabaseUrl(modules.resolveDatabaseTarget);
   const db = modules.createDb(databaseUrl);
   const baseUrl = normalizeBaseUrl(opts.baseUrl);
-  const runId = randomUUID();
+  const runId = opts.runId ?? randomUUID();
 
   try {
     const company = await resolveCompany(db, modules, opts);
     const agent = await resolveAgent(db, modules, company, opts);
+    const heartbeatRun = await ensureProofHeartbeatRun(db, modules, { runId, company, agent });
     const token = modules.createLocalAgentJwt(agent.id, company.id, agent.adapterType, runId);
     if (!token) {
       throw new Error("Could not create local agent JWT. PAPERCLIP_AGENT_JWT_SECRET or BETTER_AUTH_SECRET is missing from the helper runtime.");
@@ -267,10 +377,66 @@ async function main() {
     const plugin = findPlugin(discovery, opts.pluginId);
     const resolvedPluginId = plugin?.id ?? opts.pluginId;
     const actions = [];
+    let issueCreate = null;
 
     if ((opts.syncProbe || opts.launchProbe) && !opts.issueId) {
       throw new Error("--issue-id is required for action probes");
     }
+
+    if (opts.createIssue) {
+      const existing = await findExistingIssueByOrigin({
+        baseUrl,
+        companyId: company.id,
+        token,
+        runId,
+        originKind: opts.originKind,
+        originId: opts.originId,
+      });
+
+      if (existing?.issue) {
+        issueCreate = {
+          duplicateHandling: "reused_existing_origin_issue",
+          lookup: existing.lookup,
+          issue: existing.issue,
+          create: null,
+        };
+      } else if (existing?.lookup && !isHttpSuccess(existing.lookup)) {
+        issueCreate = {
+          duplicateHandling: "origin_lookup_failed_no_create",
+          lookup: existing.lookup,
+          issue: null,
+          create: null,
+        };
+      } else {
+        const createBody = buildCreateIssueBody({
+          title: opts.issueTitle,
+          description: opts.issueDescription,
+          status: opts.issueStatus,
+          priority: opts.issuePriority,
+          originKind: opts.originKind,
+          originId: opts.originId,
+          projectId: opts.projectId,
+          assigneeAgentId: opts.assigneeAgentId,
+        });
+        const createResult = await requestJson({
+          method: "POST",
+          url: `${baseUrl}/api/companies/${encodeURIComponent(company.id)}/issues`,
+          token,
+          runId,
+          body: createBody,
+        });
+        issueCreate = {
+          duplicateHandling: opts.originKind && opts.originId ? "created_after_empty_origin_lookup" : "not_origin_scoped",
+          lookup: existing?.lookup ?? null,
+          issue: createResult.body ?? null,
+          create: createResult,
+        };
+      }
+    }
+
+    const issueCreateOk = !issueCreate || Boolean(
+      issueCreate.issue && (!issueCreate.create || isHttpSuccess(issueCreate.create)),
+    );
 
     if (opts.syncProbe) {
       actions.push({
@@ -299,12 +465,13 @@ async function main() {
     }
 
     const report = {
-      ok: discovery.routeAuthOk && actions.every((entry) => entry.result.routeAuthOk),
+      ok: discovery.routeAuthOk && actions.every((entry) => entry.result.routeAuthOk) && issueCreateOk,
       credential: {
         type: "local_agent_jwt",
         token: "<redacted>",
         runId,
       },
+      heartbeatRun,
       baseUrl,
       company: {
         id: company.id,
@@ -329,6 +496,7 @@ async function main() {
             }
           : null,
       },
+      issueCreate,
       actions,
     };
 

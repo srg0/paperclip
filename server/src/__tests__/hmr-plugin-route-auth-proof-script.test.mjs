@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCreateIssueBody,
+  buildIssueOriginLookupUrl,
   buildLaunchActionBody,
+  buildProofHeartbeatRunRecord,
   buildSyncActionBody,
   parseArgs,
   summarizeHttpResult,
@@ -54,5 +57,71 @@ describe("hmr plugin route auth proof helper", () => {
       issueId: "HOM-1",
       syncProbe: true,
     });
+  });
+
+  it("builds a persisted heartbeat run context for local JWT proof", () => {
+    const now = new Date("2026-07-01T00:00:00.000Z");
+    expect(buildProofHeartbeatRunRecord({
+      runId: "11111111-1111-4111-8111-111111111111",
+      companyId: "22222222-2222-4222-8222-222222222222",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      now,
+    })).toMatchObject({
+      id: "11111111-1111-4111-8111-111111111111",
+      companyId: "22222222-2222-4222-8222-222222222222",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      invocationSource: "hmr_plugin_route_auth_proof",
+      triggerDetail: "local_agent_jwt_route_proof",
+      status: "succeeded",
+      startedAt: now,
+      finishedAt: now,
+      resultJson: {
+        proof: "hmr_plugin_route_auth",
+        routeContext: "public_paperclip_api",
+      },
+    });
+  });
+
+  it("builds origin-scoped issue create payloads and lookup URLs", () => {
+    expect(parseArgs([
+      "--create-issue",
+      "--issue-title",
+      "HMR replay",
+      "--origin-kind",
+      "smoke_orchestrator_hmr_positive_replay",
+      "--origin-id",
+      "atlas-verifier-positive-001",
+      "--run-id",
+      "11111111-1111-4111-8111-111111111111",
+    ])).toMatchObject({
+      createIssue: true,
+      issueTitle: "HMR replay",
+      originKind: "smoke_orchestrator_hmr_positive_replay",
+      originId: "atlas-verifier-positive-001",
+      runId: "11111111-1111-4111-8111-111111111111",
+    });
+
+    expect(buildCreateIssueBody({
+      title: "HMR replay",
+      description: "positive replay",
+      status: "backlog",
+      priority: "high",
+      originKind: "smoke_orchestrator_hmr_positive_replay",
+      originId: "atlas-verifier-positive-001",
+    })).toEqual({
+      title: "HMR replay",
+      description: "positive replay",
+      status: "backlog",
+      priority: "high",
+      originKind: "smoke_orchestrator_hmr_positive_replay",
+      originId: "atlas-verifier-positive-001",
+    });
+
+    expect(buildIssueOriginLookupUrl(
+      "https://paperclip.ai.k-digital.pro",
+      "22222222-2222-4222-8222-222222222222",
+      "smoke_orchestrator_hmr_positive_replay",
+      "atlas verifier positive/001",
+    )).toBe("https://paperclip.ai.k-digital.pro/api/companies/22222222-2222-4222-8222-222222222222/issues?originKind=smoke_orchestrator_hmr_positive_replay&originId=atlas+verifier+positive%2F001&limit=10");
   });
 });
