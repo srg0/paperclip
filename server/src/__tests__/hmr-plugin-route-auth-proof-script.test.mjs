@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCreateIssueBody,
   buildDataProbeBody,
+  buildFollowupActionBody,
   buildIssueOriginLookupUrl,
   buildLaunchActionBody,
   buildProofHeartbeatRunRecord,
@@ -29,6 +30,31 @@ describe("hmr plugin route auth proof helper", () => {
         issueId: "issue-1",
         repo: "homio/core",
         envName: "ai01",
+      },
+    });
+
+    expect(buildFollowupActionBody("company-1", "issue-1", {
+      repo: "homio/core",
+      envName: "ai01",
+      request: "continue the same HMR proof",
+      branch: "task/paperclip-hmr-positive-replay",
+      currentAtlasTaskId: "paperclip-issue-t2",
+      taskId: "paperclip-issue-t3",
+      turnNumber: 3,
+      turnLabel: "TURN 3",
+    })).toEqual({
+      companyId: "company-1",
+      params: {
+        companyId: "company-1",
+        issueId: "issue-1",
+        repo: "homio/core",
+        envName: "ai01",
+        request: "continue the same HMR proof",
+        branch: "task/paperclip-hmr-positive-replay",
+        currentAtlasTaskId: "paperclip-issue-t2",
+        taskId: "paperclip-issue-t3",
+        turnNumber: 3,
+        turnLabel: "TURN 3",
       },
     });
   });
@@ -63,9 +89,18 @@ describe("hmr plugin route auth proof helper", () => {
       "--issue-id",
       "HOM-1",
       "--sync-probe",
+      "--followup-probe",
       "--data-probe",
       "--data-key",
       "atlas-bridge-issue-execution",
+      "--branch",
+      "task/paperclip-hmr-positive-replay",
+      "--current-atlas-task-id",
+      "paperclip-issue-t2",
+      "--turn-number",
+      "3",
+      "--turn-label",
+      "TURN 3",
       "--skip-heartbeat-run",
     ])).toMatchObject({
       baseUrl: "https://paperclip.ai.k-digital.pro",
@@ -73,8 +108,13 @@ describe("hmr plugin route auth proof helper", () => {
       agentName: "OpenClaw",
       issueId: "HOM-1",
       syncProbe: true,
+      followupProbe: true,
       dataProbe: true,
       dataKey: "atlas-bridge-issue-execution",
+      branch: "task/paperclip-hmr-positive-replay",
+      currentAtlasTaskId: "paperclip-issue-t2",
+      turnNumber: 3,
+      turnLabel: "TURN 3",
       skipHeartbeatRun: true,
     });
   });

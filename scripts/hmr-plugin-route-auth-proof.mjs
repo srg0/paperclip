@@ -16,7 +16,9 @@ function usage() {
   console.error(
     [
       "Usage:",
-      "  node --import tsx scripts/hmr-plugin-route-auth-proof.mjs [options]",
+      "  server/node_modules/.bin/tsx scripts/hmr-plugin-route-auth-proof.mjs [options]",
+      "  pnpm --filter @paperclipai/server exec tsx ../scripts/hmr-plugin-route-auth-proof.mjs [options]",
+      "  node --import tsx scripts/hmr-plugin-route-auth-proof.mjs [options]  # only when tsx is resolvable from the runtime root",
       "",
       "Options:",
       "  --base-url <url>              Paperclip HMR base URL",
@@ -39,10 +41,16 @@ function usage() {
       "  --skip-heartbeat-run          Do not insert a proof heartbeat run before route probes",
       "  --sync-probe                  Probe atlas-bridge-sync-issue-projection",
       "  --launch-probe                Probe atlas-bridge-launch-issue-execution",
+      "  --followup-probe              Probe atlas-bridge-followup-issue-execution",
       "  --data-probe                  Probe atlas-bridge-issue-execution data projection",
       "  --data-key <key>              Plugin data key, default atlas-bridge-issue-execution",
       "  --repo <repo>                 Launch repo param, default homio/core",
       "  --env-name <env>              Launch envName param, default ai01",
+      "  --branch <branch>             Optional follow-up branch/change identity",
+      "  --current-atlas-task-id <id>  Optional currently bound Atlas task id for follow-up",
+      "  --task-id <id>                Optional explicit follow-up Atlas task id",
+      "  --turn-number <number>        Optional follow-up turn number",
+      "  --turn-label <label>          Optional follow-up turn label",
       "  --json                        Emit JSON only",
     ].join("\n"),
   );
@@ -70,10 +78,16 @@ export function parseArgs(argv) {
     skipHeartbeatRun: false,
     syncProbe: false,
     launchProbe: false,
+    followupProbe: false,
     dataProbe: false,
     dataKey: "atlas-bridge-issue-execution",
     repo: "homio/core",
     envName: "ai01",
+    branch: null,
+    currentAtlasTaskId: null,
+    taskId: null,
+    turnNumber: null,
+    turnLabel: null,
     request: DEFAULT_REQUEST,
     json: false,
   };
@@ -109,10 +123,16 @@ export function parseArgs(argv) {
     else if (arg === "--skip-heartbeat-run") out.skipHeartbeatRun = true;
     else if (arg === "--repo") out.repo = readValue();
     else if (arg === "--env-name") out.envName = readValue();
+    else if (arg === "--branch") out.branch = readValue();
+    else if (arg === "--current-atlas-task-id") out.currentAtlasTaskId = readValue();
+    else if (arg === "--task-id") out.taskId = readValue();
+    else if (arg === "--turn-number") out.turnNumber = Number(readValue());
+    else if (arg === "--turn-label") out.turnLabel = readValue();
     else if (arg === "--data-key") out.dataKey = readValue();
     else if (arg === "--request") out.request = readValue();
     else if (arg === "--sync-probe") out.syncProbe = true;
     else if (arg === "--launch-probe") out.launchProbe = true;
+    else if (arg === "--followup-probe") out.followupProbe = true;
     else if (arg === "--data-probe") out.dataProbe = true;
     else if (arg === "--json") out.json = true;
     else if (arg === "--help" || arg === "-h") {
@@ -274,6 +294,25 @@ export function buildLaunchActionBody(companyId, issueId, opts = {}) {
       envName: opts.envName ?? "ai01",
       request: opts.request ?? DEFAULT_REQUEST,
     },
+  };
+}
+
+export function buildFollowupActionBody(companyId, issueId, opts = {}) {
+  const params = {
+    companyId,
+    issueId,
+    repo: opts.repo ?? "homio/core",
+    envName: opts.envName ?? "ai01",
+    request: opts.request ?? DEFAULT_REQUEST,
+  };
+  if (opts.branch) params.branch = opts.branch;
+  if (opts.currentAtlasTaskId) params.currentAtlasTaskId = opts.currentAtlasTaskId;
+  if (opts.taskId) params.taskId = opts.taskId;
+  if (opts.turnNumber) params.turnNumber = opts.turnNumber;
+  if (opts.turnLabel) params.turnLabel = opts.turnLabel;
+  return {
+    companyId,
+    params,
   };
 }
 
@@ -443,7 +482,7 @@ async function main() {
     const actions = [];
     let issueCreate = null;
 
-    if ((opts.syncProbe || opts.launchProbe || opts.dataProbe) && !opts.issueId) {
+    if ((opts.syncProbe || opts.launchProbe || opts.followupProbe || opts.dataProbe) && !opts.issueId) {
       throw new Error("--issue-id is required for action/data probes");
     }
 
@@ -524,6 +563,19 @@ async function main() {
           token,
           runId,
           body: buildLaunchActionBody(company.id, opts.issueId, opts),
+        }),
+      });
+    }
+
+    if (opts.followupProbe) {
+      actions.push({
+        key: "atlas-bridge-followup-issue-execution",
+        result: await requestJson({
+          method: "POST",
+          url: `${baseUrl}/api/plugins/${resolvedPluginId}/actions/atlas-bridge-followup-issue-execution`,
+          token,
+          runId,
+          body: buildFollowupActionBody(company.id, opts.issueId, opts),
         }),
       });
     }
