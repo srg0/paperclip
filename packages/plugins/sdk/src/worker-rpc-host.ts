@@ -640,6 +640,36 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             return callHost("issues.documents.delete", { issueId, key, companyId });
           },
         },
+
+        attachments: {
+          async list(issueId: string, companyId: string) {
+            return callHost("issues.attachments.list", { issueId, companyId });
+          },
+
+          async get(attachmentId: string, companyId: string) {
+            return callHost("issues.attachments.get", { attachmentId, companyId });
+          },
+
+          async createFromUrl(input) {
+            return callHost("issues.attachments.createFromUrl", {
+              issueId: input.issueId,
+              companyId: input.companyId,
+              url: input.url,
+              filename: input.filename ?? null,
+              issueCommentId: input.issueCommentId ?? null,
+            });
+          },
+
+          async createFromDataUrl(input) {
+            return callHost("issues.attachments.createFromDataUrl", {
+              issueId: input.issueId,
+              companyId: input.companyId,
+              dataUrl: input.dataUrl,
+              filename: input.filename ?? null,
+              issueCommentId: input.issueCommentId ?? null,
+            });
+          },
+        },
       },
 
       agents: {

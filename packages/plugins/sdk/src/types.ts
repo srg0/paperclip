@@ -21,6 +21,7 @@ import type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueAttachment,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -65,6 +66,7 @@ export type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueAttachment,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -847,6 +849,58 @@ export interface PluginIssueDocumentsClient {
 }
 
 /**
+ * `ctx.issues.attachments` — read and create native issue attachments.
+ *
+ * Requires:
+ * - `issue.attachments.read` for `list` and `get`
+ * - `issue.attachments.write` for `createFromUrl` and `createFromDataUrl`
+ */
+export interface PluginIssueAttachmentsClient {
+  /**
+   * List native attachments for an issue.
+   *
+   * Requires the `issue.attachments.read` capability.
+   */
+  list(issueId: string, companyId: string): Promise<IssueAttachment[]>;
+
+  /**
+   * Get one native issue attachment by id.
+   *
+   * Requires the `issue.attachments.read` capability.
+   */
+  get(attachmentId: string, companyId: string): Promise<IssueAttachment | null>;
+
+  /**
+   * Fetch an external HTTP(S) image or document through the host and attach it
+   * to an issue using the native Paperclip attachment store.
+   *
+   * Requires the `issue.attachments.write` capability.
+   */
+  createFromUrl(input: {
+    issueId: string;
+    companyId: string;
+    url: string;
+    filename?: string | null;
+    issueCommentId?: string | null;
+  }): Promise<IssueAttachment>;
+
+  /**
+   * Attach a small data URL to an issue using the native Paperclip attachment
+   * store. Intended for generated proof images or plugin-owned artifacts that
+   * already exist in memory.
+   *
+   * Requires the `issue.attachments.write` capability.
+   */
+  createFromDataUrl(input: {
+    issueId: string;
+    companyId: string;
+    dataUrl: string;
+    filename?: string | null;
+    issueCommentId?: string | null;
+  }): Promise<IssueAttachment>;
+}
+
+/**
  * `ctx.issues` — read and mutate issues plus comments.
  *
  * Requires:
@@ -857,6 +911,8 @@ export interface PluginIssueDocumentsClient {
  * - `issue.comments.create` for `createComment`
  * - `issue.documents.read` for `documents.list` and `documents.get`
  * - `issue.documents.write` for `documents.upsert` and `documents.delete`
+ * - `issue.attachments.read` for `attachments.list` and `attachments.get`
+ * - `issue.attachments.write` for attachment creation
  */
 export interface PluginIssuesClient {
   list(input: {
@@ -891,6 +947,8 @@ export interface PluginIssuesClient {
   createComment(issueId: string, body: string, companyId: string): Promise<IssueComment>;
   /** Read and write issue documents. Requires `issue.documents.read` / `issue.documents.write`. */
   documents: PluginIssueDocumentsClient;
+  /** Read and create native issue attachments. Requires `issue.attachments.read` / `issue.attachments.write`. */
+  attachments: PluginIssueAttachmentsClient;
 }
 
 /**

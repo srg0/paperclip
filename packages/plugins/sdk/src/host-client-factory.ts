@@ -173,6 +173,14 @@ export interface HostServices {
     delete(params: WorkerToHostMethods["issues.documents.delete"][0]): Promise<WorkerToHostMethods["issues.documents.delete"][1]>;
   };
 
+  /** Provides `issues.attachments.list`, `issues.attachments.get`, `issues.attachments.createFromUrl`, `issues.attachments.createFromDataUrl`. */
+  issueAttachments: {
+    list(params: WorkerToHostMethods["issues.attachments.list"][0]): Promise<WorkerToHostMethods["issues.attachments.list"][1]>;
+    get(params: WorkerToHostMethods["issues.attachments.get"][0]): Promise<WorkerToHostMethods["issues.attachments.get"][1]>;
+    createFromUrl(params: WorkerToHostMethods["issues.attachments.createFromUrl"][0]): Promise<WorkerToHostMethods["issues.attachments.createFromUrl"][1]>;
+    createFromDataUrl(params: WorkerToHostMethods["issues.attachments.createFromDataUrl"][0]): Promise<WorkerToHostMethods["issues.attachments.createFromDataUrl"][1]>;
+  };
+
   /** Provides `agents.list`, `agents.get`, `agents.pause`, `agents.resume`, `agents.invoke`. */
   agents: {
     list(params: WorkerToHostMethods["agents.list"][0]): Promise<WorkerToHostMethods["agents.list"][1]>;
@@ -311,6 +319,10 @@ const METHOD_CAPABILITY_MAP: Record<WorkerToHostMethodName, PluginCapability | n
   "issues.documents.get": "issue.documents.read",
   "issues.documents.upsert": "issue.documents.write",
   "issues.documents.delete": "issue.documents.write",
+  "issues.attachments.list": "issue.attachments.read",
+  "issues.attachments.get": "issue.attachments.read",
+  "issues.attachments.createFromUrl": "issue.attachments.write",
+  "issues.attachments.createFromDataUrl": "issue.attachments.write",
 
   // Agents
   "agents.list": "agents.read",
@@ -509,6 +521,20 @@ export function createHostClientHandlers(
     }),
     "issues.documents.delete": gated("issues.documents.delete", async (params) => {
       return services.issueDocuments.delete(params);
+    }),
+
+    // Issue Attachments
+    "issues.attachments.list": gated("issues.attachments.list", async (params) => {
+      return services.issueAttachments.list(params);
+    }),
+    "issues.attachments.get": gated("issues.attachments.get", async (params) => {
+      return services.issueAttachments.get(params);
+    }),
+    "issues.attachments.createFromUrl": gated("issues.attachments.createFromUrl", async (params) => {
+      return services.issueAttachments.createFromUrl(params);
+    }),
+    "issues.attachments.createFromDataUrl": gated("issues.attachments.createFromDataUrl", async (params) => {
+      return services.issueAttachments.createFromDataUrl(params);
     }),
 
     // Agents

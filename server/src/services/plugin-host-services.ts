@@ -10,7 +10,9 @@ import type {
   Goal,
   PluginWorkspace,
   IssueComment,
+  IssueAttachment,
 } from "@paperclipai/plugin-sdk";
+import type { StorageService } from "../storage/types.js";
 import { companyService } from "./companies.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
@@ -28,6 +30,7 @@ import { pluginRegistryService } from "./plugin-registry.js";
 import { pluginStateStore } from "./plugin-state-store.js";
 import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
 import { logActivity } from "./activity-log.js";
+import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { IncomingMessage, RequestOptions as HttpRequestOptions } from "node:http";
@@ -269,6 +272,134 @@ async function executePinnedHttpRequest(
   };
 }
 
+async function executePinnedBinaryGet(
+  target: ValidatedFetchTarget,
+  signal: AbortSignal,
+  maxBytes: number,
+): Promise<{ status: number; statusText: string; headers: Record<string, string>; body: Buffer }> {
+  const { options } = buildPinnedRequestOptions(target, { method: "GET" });
+
+  const response = await new Promise<IncomingMessage>((resolve, reject) => {
+    const requestFn = target.useTls ? httpsRequest : httpRequest;
+    const req = requestFn({ ...options, signal }, resolve);
+    req.on("error", reject);
+    req.end();
+  });
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  await new Promise<void>((resolve, reject) => {
+    response.on("data", (chunk: Buffer | string) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buf.length;
+      if (totalBytes > maxBytes) {
+        chunks.length = 0;
+        response.destroy(new Error(`Attachment source exceeded ${maxBytes} bytes`));
+        return;
+      }
+      chunks.push(buf);
+    });
+    response.on("end", resolve);
+    response.on("error", reject);
+  });
+
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(response.headers)) {
+    if (Array.isArray(value)) {
+      headers[key] = value.join(", ");
+    } else if (value !== undefined) {
+      headers[key] = value;
+    }
+  }
+
+  return {
+    status: response.statusCode ?? 500,
+    statusText: response.statusMessage ?? "",
+    headers,
+    body: Buffer.concat(chunks),
+  };
+}
+
+function withIssueAttachmentContentPath<T extends { id: string }>(attachment: T): T & { contentPath: string } {
+  return {
+    ...attachment,
+    contentPath: `/api/attachments/${attachment.id}/content`,
+  };
+}
+
+function filenameFromUrl(urlString: string): string | null {
+  try {
+    const parsed = new URL(urlString);
+    const segment = parsed.pathname.split("/").filter(Boolean).pop();
+    return segment ? decodeURIComponent(segment) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseDataUrl(dataUrl: string): { contentType: string; body: Buffer } {
+  const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/is);
+  if (!match || !match[1] || !match[2]) {
+    throw new Error("Attachment dataUrl must be a base64 data URL");
+  }
+  return {
+    contentType: match[1].toLowerCase(),
+    body: Buffer.from(match[2], "base64"),
+  };
+}
+
+async function storeIssueAttachmentFromBuffer({
+  storage,
+  issues,
+  companyId,
+  issueId,
+  issueCommentId,
+  body,
+  contentType,
+  filename,
+}: {
+  storage: StorageService;
+  issues: ReturnType<typeof issueService>;
+  companyId: string;
+  issueId: string;
+  issueCommentId?: string | null;
+  body: Buffer;
+  contentType: string;
+  filename?: string | null;
+}): Promise<IssueAttachment> {
+  const normalizedContentType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!isAllowedContentType(normalizedContentType)) {
+    throw new Error(`Unsupported attachment type: ${normalizedContentType || "unknown"}`);
+  }
+  if (body.length <= 0) {
+    throw new Error("Attachment is empty");
+  }
+  if (body.length > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+  }
+
+  const stored = await storage.putFile({
+    companyId,
+    namespace: `issues/${issueId}`,
+    originalFilename: filename ?? null,
+    contentType: normalizedContentType,
+    body,
+  });
+
+  return withIssueAttachmentContentPath(await issues.createAttachment({
+    issueId,
+    issueCommentId: issueCommentId ?? null,
+    provider: stored.provider,
+    objectKey: stored.objectKey,
+    contentType: stored.contentType,
+    byteSize: stored.byteSize,
+    sha256: stored.sha256,
+    originalFilename: stored.originalFilename,
+    createdByAgentId: null,
+    createdByUserId: null,
+  }) as IssueAttachment);
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PATH_LIKE_PATTERN = /[\\/]/;
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
@@ -443,6 +574,7 @@ export function buildHostServices(
   pluginKey: string,
   eventBus: PluginEventBus,
   notifyWorker?: (method: string, params: unknown) => void,
+  storage?: StorageService,
 ): HostServices & { dispose(): void } {
   const registry = pluginRegistryService(db);
   const stateStore = pluginStateStore(db);
@@ -819,6 +951,70 @@ export function buildHostServices(
           params.body,
           {},
         )) as IssueComment;
+      },
+    },
+
+    issueAttachments: {
+      async list(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        requireInCompany("Issue", await issues.getById(params.issueId), companyId);
+        return (await issues.listAttachments(params.issueId)).map(withIssueAttachmentContentPath) as IssueAttachment[];
+      },
+      async get(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const attachment = await issues.getAttachmentById(params.attachmentId);
+        if (!attachment || attachment.companyId !== companyId) return null;
+        return withIssueAttachmentContentPath(attachment) as IssueAttachment;
+      },
+      async createFromDataUrl(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        requireInCompany("Issue", await issues.getById(params.issueId), companyId);
+        if (!storage) {
+          throw new Error("Native issue attachment storage is not configured for this plugin host");
+        }
+        const parsed = parseDataUrl(params.dataUrl);
+        return await storeIssueAttachmentFromBuffer({
+          storage,
+          issues,
+          companyId,
+          issueId: params.issueId,
+          issueCommentId: params.issueCommentId ?? null,
+          body: parsed.body,
+          contentType: parsed.contentType,
+          filename: params.filename ?? null,
+        });
+      },
+      async createFromUrl(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        requireInCompany("Issue", await issues.getById(params.issueId), companyId);
+        if (!storage) {
+          throw new Error("Native issue attachment storage is not configured for this plugin host");
+        }
+        const target = await validateAndResolveFetchUrl(params.url);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), PLUGIN_FETCH_TIMEOUT_MS);
+        try {
+          const response = await executePinnedBinaryGet(target, controller.signal, MAX_ATTACHMENT_BYTES);
+          if (response.status < 200 || response.status >= 300) {
+            throw new Error(`Attachment source returned HTTP ${response.status}`);
+          }
+          return await storeIssueAttachmentFromBuffer({
+            storage,
+            issues,
+            companyId,
+            issueId: params.issueId,
+            issueCommentId: params.issueCommentId ?? null,
+            body: response.body,
+            contentType: response.headers["content-type"] ?? "application/octet-stream",
+            filename: params.filename ?? filenameFromUrl(params.url),
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
       },
     },
 

@@ -27,6 +27,7 @@ import type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueAttachment,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -629,6 +630,34 @@ export interface WorkerToHostMethods {
   "issues.documents.delete": [
     params: { issueId: string; key: string; companyId: string },
     result: void,
+  ];
+  "issues.attachments.list": [
+    params: { issueId: string; companyId: string },
+    result: IssueAttachment[],
+  ];
+  "issues.attachments.get": [
+    params: { attachmentId: string; companyId: string },
+    result: IssueAttachment | null,
+  ];
+  "issues.attachments.createFromUrl": [
+    params: {
+      issueId: string;
+      companyId: string;
+      url: string;
+      filename?: string | null;
+      issueCommentId?: string | null;
+    },
+    result: IssueAttachment,
+  ];
+  "issues.attachments.createFromDataUrl": [
+    params: {
+      issueId: string;
+      companyId: string;
+      dataUrl: string;
+      filename?: string | null;
+      issueCommentId?: string | null;
+    },
+    result: IssueAttachment,
   ];
 
   // Agents (read)

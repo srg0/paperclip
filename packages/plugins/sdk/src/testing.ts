@@ -7,6 +7,7 @@ import type {
   Project,
   Issue,
   IssueComment,
+  IssueAttachment,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -50,6 +51,7 @@ export interface TestHarness {
     projects?: Project[];
     issues?: Issue[];
     issueComments?: IssueComment[];
+    issueAttachments?: IssueAttachment[];
     agents?: Agent[];
     goals?: Goal[];
   }): void;
@@ -140,6 +142,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const projects = new Map<string, Project>();
   const issues = new Map<string, Issue>();
   const issueComments = new Map<string, IssueComment[]>();
+  const issueAttachments = new Map<string, IssueAttachment[]>();
   const agents = new Map<string, Agent>();
   const goals = new Map<string, Goal>();
   const projectWorkspaces = new Map<string, PluginWorkspace[]>();
@@ -455,6 +458,84 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           }
         },
       },
+      attachments: {
+        async list(issueId, companyId) {
+          requireCapability(manifest, capabilitySet, "issue.attachments.read");
+          if (!isInCompany(issues.get(issueId), companyId)) return [];
+          return issueAttachments.get(issueId) ?? [];
+        },
+        async get(attachmentId, companyId) {
+          requireCapability(manifest, capabilitySet, "issue.attachments.read");
+          for (const attachments of issueAttachments.values()) {
+            const attachment = attachments.find((row) => row.id === attachmentId && row.companyId === companyId);
+            if (attachment) return attachment;
+          }
+          return null;
+        },
+        async createFromUrl(input) {
+          requireCapability(manifest, capabilitySet, "issue.attachments.write");
+          const parentIssue = issues.get(input.issueId);
+          if (!isInCompany(parentIssue, input.companyId)) {
+            throw new Error(`Issue not found: ${input.issueId}`);
+          }
+          const now = new Date();
+          const attachment: IssueAttachment = {
+            id: randomUUID(),
+            companyId: parentIssue.companyId,
+            issueId: input.issueId,
+            issueCommentId: input.issueCommentId ?? null,
+            assetId: randomUUID(),
+            provider: "test",
+            objectKey: input.url,
+            contentType: "image/png",
+            byteSize: 0,
+            sha256: "test",
+            originalFilename: input.filename ?? null,
+            createdByAgentId: null,
+            createdByUserId: null,
+            createdAt: now,
+            updatedAt: now,
+            contentPath: "",
+          };
+          attachment.contentPath = `/api/attachments/${attachment.id}/content`;
+          const current = issueAttachments.get(input.issueId) ?? [];
+          current.push(attachment);
+          issueAttachments.set(input.issueId, current);
+          return attachment;
+        },
+        async createFromDataUrl(input) {
+          requireCapability(manifest, capabilitySet, "issue.attachments.write");
+          const parentIssue = issues.get(input.issueId);
+          if (!isInCompany(parentIssue, input.companyId)) {
+            throw new Error(`Issue not found: ${input.issueId}`);
+          }
+          const match = input.dataUrl.match(/^data:([^;,]+);base64,/i);
+          const now = new Date();
+          const attachment: IssueAttachment = {
+            id: randomUUID(),
+            companyId: parentIssue.companyId,
+            issueId: input.issueId,
+            issueCommentId: input.issueCommentId ?? null,
+            assetId: randomUUID(),
+            provider: "test",
+            objectKey: "data-url",
+            contentType: match?.[1]?.toLowerCase() ?? "application/octet-stream",
+            byteSize: 0,
+            sha256: "test",
+            originalFilename: input.filename ?? null,
+            createdByAgentId: null,
+            createdByUserId: null,
+            createdAt: now,
+            updatedAt: now,
+            contentPath: "",
+          };
+          attachment.contentPath = `/api/attachments/${attachment.id}/content`;
+          const current = issueAttachments.get(input.issueId) ?? [];
+          current.push(attachment);
+          issueAttachments.set(input.issueId, current);
+          return attachment;
+        },
+      },
     },
     agents: {
       async list(input) {
@@ -660,6 +741,11 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         const list = issueComments.get(row.issueId) ?? [];
         list.push(row);
         issueComments.set(row.issueId, list);
+      }
+      for (const row of input.issueAttachments ?? []) {
+        const list = issueAttachments.get(row.issueId) ?? [];
+        list.push(row);
+        issueAttachments.set(row.issueId, list);
       }
       for (const row of input.agents ?? []) agents.set(row.id, row);
       for (const row of input.goals ?? []) goals.set(row.id, row);
