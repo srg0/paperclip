@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildCreateIssueBody,
   buildDataProbeBody,
+  buildRetryActionBody,
   buildFollowupActionBody,
   buildIssueOriginLookupUrl,
   buildLaunchActionBody,
   buildProofHeartbeatRunRecord,
   buildSkippedHeartbeatRunRecord,
+  findPlugin,
   buildSyncActionBody,
   parseArgs,
   summarizeFetchError,
@@ -57,6 +59,29 @@ describe("hmr plugin route auth proof helper", () => {
         turnLabel: "TURN 3",
       },
     });
+
+    expect(buildRetryActionBody("company-1", "issue-1", {
+      repo: "homio/core",
+      envName: "ai01",
+      request: "retry after verifier env repair",
+      maxRetryExecutions: 1,
+      minBackoffMs: 0,
+      repairVerificationKey: "def-hmr-verify-env-012@7517b200",
+      repairProofRef: "repair-cycle-def-hmr-verify-env-012.md",
+    })).toEqual({
+      companyId: "company-1",
+      params: {
+        companyId: "company-1",
+        issueId: "issue-1",
+        repo: "homio/core",
+        envName: "ai01",
+        request: "retry after verifier env repair",
+        maxRetryExecutions: 1,
+        minBackoffMs: 0,
+        repairVerificationKey: "def-hmr-verify-env-012@7517b200",
+        repairProofRef: "repair-cycle-def-hmr-verify-env-012.md",
+      },
+    });
   });
 
   it("builds data probe bodies with top-level and nested company scope", () => {
@@ -90,6 +115,7 @@ describe("hmr plugin route auth proof helper", () => {
       "HOM-1",
       "--sync-probe",
       "--followup-probe",
+      "--retry-probe",
       "--data-probe",
       "--data-key",
       "atlas-bridge-issue-execution",
@@ -101,6 +127,14 @@ describe("hmr plugin route auth proof helper", () => {
       "3",
       "--turn-label",
       "TURN 3",
+      "--max-retry-executions",
+      "1",
+      "--min-backoff-ms",
+      "0",
+      "--repair-verification-key",
+      "def-hmr-verify-env-012@7517b200",
+      "--repair-proof-ref",
+      "repair-cycle-def-hmr-verify-env-012.md",
       "--skip-heartbeat-run",
     ])).toMatchObject({
       baseUrl: "https://paperclip.ai.k-digital.pro",
@@ -109,13 +143,47 @@ describe("hmr plugin route auth proof helper", () => {
       issueId: "HOM-1",
       syncProbe: true,
       followupProbe: true,
+      retryProbe: true,
       dataProbe: true,
       dataKey: "atlas-bridge-issue-execution",
       branch: "task/paperclip-hmr-positive-replay",
       currentAtlasTaskId: "paperclip-issue-t2",
       turnNumber: 3,
       turnLabel: "TURN 3",
+      maxRetryExecutions: 1,
+      minBackoffMs: 0,
+      repairVerificationKey: "def-hmr-verify-env-012@7517b200",
+      repairProofRef: "repair-cycle-def-hmr-verify-env-012.md",
       skipHeartbeatRun: true,
+    });
+  });
+
+  it("finds plugins across supported discovery response shapes", () => {
+    expect(findPlugin({
+      body: [
+        {
+          id: "plugin-uuid",
+          pluginKey: "homio.atlas-bridge",
+          version: "0.0.145",
+        },
+      ],
+    }, "homio.atlas-bridge")).toMatchObject({
+      id: "plugin-uuid",
+    });
+
+    expect(findPlugin({
+      body: {
+        plugins: [
+          {
+            id: "plugin-uuid",
+            manifest: {
+              pluginKey: "homio.atlas-bridge",
+            },
+          },
+        ],
+      },
+    }, "homio.atlas-bridge")).toMatchObject({
+      id: "plugin-uuid",
     });
   });
 

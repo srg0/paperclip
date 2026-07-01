@@ -42,6 +42,7 @@ function usage() {
       "  --sync-probe                  Probe atlas-bridge-sync-issue-projection",
       "  --launch-probe                Probe atlas-bridge-launch-issue-execution",
       "  --followup-probe              Probe atlas-bridge-followup-issue-execution",
+      "  --retry-probe                 Probe atlas-bridge-retry-issue-execution",
       "  --data-probe                  Probe atlas-bridge-issue-execution data projection",
       "  --data-key <key>              Plugin data key, default atlas-bridge-issue-execution",
       "  --repo <repo>                 Launch repo param, default homio/core",
@@ -51,9 +52,21 @@ function usage() {
       "  --task-id <id>                Optional explicit follow-up Atlas task id",
       "  --turn-number <number>        Optional follow-up turn number",
       "  --turn-label <label>          Optional follow-up turn label",
+      "  --max-retry-executions <n>    Optional retry-drain max for --retry-probe",
+      "  --min-backoff-ms <n>          Optional retry-drain backoff for --retry-probe",
+      "  --repair-verification-key <k> Optional repair verification key for --retry-probe",
+      "  --repair-proof-ref <ref>      Optional repair proof artifact ref for --retry-probe",
       "  --json                        Emit JSON only",
     ].join("\n"),
   );
+}
+
+function parseIntegerOption(name, value, { min = 0 } = {}) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min) {
+    throw new Error(`${name} must be an integer >= ${min}`);
+  }
+  return parsed;
 }
 
 export function parseArgs(argv) {
@@ -79,6 +92,7 @@ export function parseArgs(argv) {
     syncProbe: false,
     launchProbe: false,
     followupProbe: false,
+    retryProbe: false,
     dataProbe: false,
     dataKey: "atlas-bridge-issue-execution",
     repo: "homio/core",
@@ -88,6 +102,10 @@ export function parseArgs(argv) {
     taskId: null,
     turnNumber: null,
     turnLabel: null,
+    maxRetryExecutions: null,
+    minBackoffMs: null,
+    repairVerificationKey: null,
+    repairProofRef: null,
     request: DEFAULT_REQUEST,
     json: false,
   };
@@ -128,11 +146,16 @@ export function parseArgs(argv) {
     else if (arg === "--task-id") out.taskId = readValue();
     else if (arg === "--turn-number") out.turnNumber = Number(readValue());
     else if (arg === "--turn-label") out.turnLabel = readValue();
+    else if (arg === "--max-retry-executions") out.maxRetryExecutions = parseIntegerOption(arg, readValue(), { min: 1 });
+    else if (arg === "--min-backoff-ms") out.minBackoffMs = parseIntegerOption(arg, readValue(), { min: 0 });
+    else if (arg === "--repair-verification-key") out.repairVerificationKey = readValue();
+    else if (arg === "--repair-proof-ref") out.repairProofRef = readValue();
     else if (arg === "--data-key") out.dataKey = readValue();
     else if (arg === "--request") out.request = readValue();
     else if (arg === "--sync-probe") out.syncProbe = true;
     else if (arg === "--launch-probe") out.launchProbe = true;
     else if (arg === "--followup-probe") out.followupProbe = true;
+    else if (arg === "--retry-probe") out.retryProbe = true;
     else if (arg === "--data-probe") out.dataProbe = true;
     else if (arg === "--json") out.json = true;
     else if (arg === "--help" || arg === "-h") {
@@ -316,6 +339,28 @@ export function buildFollowupActionBody(companyId, issueId, opts = {}) {
   };
 }
 
+export function buildRetryActionBody(companyId, issueId, opts = {}) {
+  const params = {
+    companyId,
+    issueId,
+    repo: opts.repo ?? "homio/core",
+    envName: opts.envName ?? "ai01",
+    request: opts.request ?? DEFAULT_REQUEST,
+  };
+  if (opts.maxRetryExecutions !== null && opts.maxRetryExecutions !== undefined) {
+    params.maxRetryExecutions = opts.maxRetryExecutions;
+  }
+  if (opts.minBackoffMs !== null && opts.minBackoffMs !== undefined) {
+    params.minBackoffMs = opts.minBackoffMs;
+  }
+  if (opts.repairVerificationKey) params.repairVerificationKey = opts.repairVerificationKey;
+  if (opts.repairProofRef) params.repairProofRef = opts.repairProofRef;
+  return {
+    companyId,
+    params,
+  };
+}
+
 export function buildDataProbeBody(companyId, issueId) {
   return {
     companyId,
@@ -436,9 +481,29 @@ async function findExistingIssueByOrigin({ baseUrl, companyId, token, runId, ori
   };
 }
 
-function findPlugin(discovery, pluginId) {
-  const rows = Array.isArray(discovery.body) ? discovery.body : [];
-  return rows.find((row) => row?.id === pluginId || row?.pluginKey === pluginId) ?? null;
+function discoveryRows(body) {
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.plugins)) return body.plugins;
+  if (Array.isArray(body?.items)) return body.items;
+  if (Array.isArray(body?.data)) return body.data;
+  return [];
+}
+
+function pluginMatches(row, pluginId) {
+  return [
+    row?.id,
+    row?.pluginKey,
+    row?.key,
+    row?.name,
+    row?.manifest?.pluginKey,
+    row?.manifest?.key,
+    row?.manifest?.name,
+    row?.packageName,
+  ].some((value) => value === pluginId);
+}
+
+export function findPlugin(discovery, pluginId) {
+  return discoveryRows(discovery.body).find((row) => pluginMatches(row, pluginId)) ?? null;
 }
 
 async function main() {
@@ -482,7 +547,7 @@ async function main() {
     const actions = [];
     let issueCreate = null;
 
-    if ((opts.syncProbe || opts.launchProbe || opts.followupProbe || opts.dataProbe) && !opts.issueId) {
+    if ((opts.syncProbe || opts.launchProbe || opts.followupProbe || opts.retryProbe || opts.dataProbe) && !opts.issueId) {
       throw new Error("--issue-id is required for action/data probes");
     }
 
@@ -576,6 +641,19 @@ async function main() {
           token,
           runId,
           body: buildFollowupActionBody(company.id, opts.issueId, opts),
+        }),
+      });
+    }
+
+    if (opts.retryProbe) {
+      actions.push({
+        key: "atlas-bridge-retry-issue-execution",
+        result: await requestJson({
+          method: "POST",
+          url: `${baseUrl}/api/plugins/${resolvedPluginId}/actions/atlas-bridge-retry-issue-execution`,
+          token,
+          runId,
+          body: buildRetryActionBody(company.id, opts.issueId, opts),
         }),
       });
     }
